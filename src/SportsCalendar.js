@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
+import { Calendar, Views, dateFnsLocalizer } from 'react-big-calendar';
 import format from 'date-fns/format';
 import parse from 'date-fns/parse';
 import startOfWeek from 'date-fns/startOfWeek';
@@ -111,6 +111,8 @@ export default function SportsCalendar() {
   const [teamSearch, setTeamSearch] = useState('');
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [loadingTeams, setLoadingTeams] = useState(true);
+  const [currentView, setCurrentView] = useState(Views.MONTH);
+
 
   useEffect(() => {
     setLoadingTeams(true);
@@ -215,14 +217,16 @@ export default function SportsCalendar() {
         <p>No games found for the selected teams.</p>
       ) : (
         <Calendar
-          localizer={localizer}
-          events={filteredEvents}
-          startAccessor="start"
-          endAccessor="end"
-          style={{ height: 500 }}
-          defaultView="week"
-          components={{ event: Event }}
-        />
+        localizer={localizer}
+        events={filteredEvents}
+        startAccessor="start"
+        endAccessor="end"
+        style={{ height: 500 }}
+        view={currentView} // control current view here
+        onView={setCurrentView} // update view on user change
+        views={[Views.MONTH, Views.WEEK, Views.DAY]} // allow these views only
+        components={{ event: Event }}
+      />
       )}
     </div>
   );
