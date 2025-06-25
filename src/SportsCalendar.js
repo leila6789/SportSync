@@ -5,7 +5,7 @@ import parse from 'date-fns/parse';
 import startOfWeek from 'date-fns/startOfWeek';
 import getDay from 'date-fns/getDay';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { generateGoogleCalendarUrl, downloadICS } from './CalendarExport';
+import { generateGoogleCalendarUrl, generateGoogleCalendarBulkUrl, downloadICS } from './CalendarExport';
 
 const locales = {
   'en-US': require('date-fns/locale/en-US'),
@@ -67,7 +67,6 @@ async function fetchScheduleBySport(sport) {
       const date = game.date;
 
       const startTime = new Date(date);
-
       const homeTeam = game.competitions?.[0]?.competitors.find(c => c.homeAway === 'home')?.team.displayName || '';
       const awayTeam = game.competitions?.[0]?.competitors.find(c => c.homeAway === 'away')?.team.displayName || '';
 
@@ -97,7 +96,7 @@ function Event({ event }) {
         >
           Add to Google Calendar
         </a>
-        <button onClick={() => downloadICS(event)}>Download iCal (.ics)</button>
+        <button onClick={() => downloadICS([event])}>Download iCal (.ics)</button>
       </div>
     </div>
   );
@@ -113,10 +112,9 @@ export default function SportsCalendar() {
   const [loadingTeams, setLoadingTeams] = useState(true);
   const [currentView, setCurrentView] = useState(Views.MONTH);
 
-
   useEffect(() => {
     setLoadingTeams(true);
-    setSelectedTeams([]); // reset on sport change
+    setSelectedTeams([]);
     if (sport === 'basketball/nba') {
       fetchNBATeams().then(fetchedTeams => {
         setTeams(fetchedTeams);
@@ -211,22 +209,35 @@ export default function SportsCalendar() {
         </div>
       </div>
 
+      {filteredEvents.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <a
+            href={generateGoogleCalendarBulkUrl(filteredEvents)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <button style={{ marginRight: 10 }}>Add All to Google Calendar</button>
+          </a>
+          <button onClick={() => downloadICS(filteredEvents)}>Download All as iCal (.ics)</button>
+        </div>
+      )}
+
       {loadingEvents ? (
         <p>Loading schedule...</p>
       ) : filteredEvents.length === 0 ? (
         <p>No games found for the selected teams.</p>
       ) : (
         <Calendar
-        localizer={localizer}
-        events={filteredEvents}
-        startAccessor="start"
-        endAccessor="end"
-        style={{ height: 500 }}
-        view={currentView} // control current view here
-        onView={setCurrentView} // update view on user change
-        views={[Views.MONTH, Views.WEEK, Views.DAY]} // allow these views only
-        components={{ event: Event }}
-      />
+          localizer={localizer}
+          events={filteredEvents}
+          startAccessor="start"
+          endAccessor="end"
+          style={{ height: 500 }}
+          view={currentView}
+          onView={setCurrentView}
+          views={[Views.MONTH, Views.WEEK, Views.DAY]}
+          components={{ event: Event }}
+        />
       )}
     </div>
   );
