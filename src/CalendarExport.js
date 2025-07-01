@@ -1,3 +1,7 @@
+
+
+
+
 // Format date for Google Calendar (YYYYMMDDTHHmmssZ)
 function formatDateForGoogle(date) {
   return date.toISOString().replace(/-|:|\.\d+/g, '');
@@ -55,16 +59,33 @@ END:VEVENT
 
 // --- BULK GOOGLE CALENDAR LINK ---
 
-export function generateGoogleCalendarBulkUrl(events) {
-  if (!events.length) return 'https://calendar.google.com/calendar/r';
+export async function handleBulkAddToGoogleCalendar(events) {
+  if (!window.gapi || !window.gapi.auth2) {
+    alert('Google API not initialized.');
+    return;
+  }
 
-  const first = events[0];
-  const start = formatDateForGoogle(first.start);
-  const end = formatDateForGoogle(first.end);
-  const text = encodeURIComponent('Game Schedule');
-  const details = encodeURIComponent(
-    events.map(e => `${e.title} - ${e.start.toLocaleString()}`).join('\n')
-  );
+  try {
+    const authInstance = window.gapi.auth2.getAuthInstance();
+    if (!authInstance.isSignedIn.get()) {
+      await authInstance.signIn();
+    }
 
-  return `https://calendar.google.com/calendar/r/eventedit?text=${text}&dates=${start}/${end}&details=${details}`;
+    for (const event of events) {
+      await window.gapi.client.calendar.events.insert({
+        calendarId: 'primary',
+        resource: {
+          summary: event.title,
+          start: { dateTime: event.start.toISOString() },
+          end: { dateTime: event.end.toISOString() },
+          description: 'Synced from Sports Calendar App',
+        },
+      });
+    }
+
+    alert('Events successfully added to Google Calendar!');
+  } catch (err) {
+    console.error('Error syncing to Google Calendar:', err);
+    alert('Failed to sync events. Check the console for details.');
+  }
 }

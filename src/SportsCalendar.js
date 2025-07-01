@@ -5,7 +5,8 @@ import parse from 'date-fns/parse';
 import startOfWeek from 'date-fns/startOfWeek';
 import getDay from 'date-fns/getDay';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { generateGoogleCalendarUrl, generateGoogleCalendarBulkUrl, downloadICS } from './CalendarExport';
+import { generateGoogleCalendarUrl, downloadICS } from './CalendarExport';
+import { initGoogleServices, signInAndAddEvents } from './GoogleCalendarSync';
 
 const locales = {
   'en-US': require('date-fns/locale/en-US'),
@@ -40,7 +41,6 @@ async function fetchScheduleBySport(sport) {
     const data = await res.json();
 
     const dates = data.dates || [];
-
     dates.forEach((day) => {
       day.games.forEach((game) => {
         const startTime = new Date(game.gameDate);
@@ -61,11 +61,9 @@ async function fetchScheduleBySport(sport) {
     const data = await res.json();
 
     const games = data.events || [];
-
     games.forEach((game) => {
       const name = game.name;
       const date = game.date;
-
       const startTime = new Date(date);
       const homeTeam = game.competitions?.[0]?.competitors.find(c => c.homeAway === 'home')?.team.displayName || '';
       const awayTeam = game.competitions?.[0]?.competitors.find(c => c.homeAway === 'away')?.team.displayName || '';
@@ -113,19 +111,23 @@ export default function SportsCalendar() {
   const [currentView, setCurrentView] = useState(Views.MONTH);
 
   useEffect(() => {
+    initGoogleServices()
+      .then(() => {
+        console.log('Google API initialized');
+      })
+      .catch(err => {
+        console.error('Failed to init Google API', err);
+      });
+  }, []);
+
+  useEffect(() => {
     setLoadingTeams(true);
     setSelectedTeams([]);
-    if (sport === 'basketball/nba') {
-      fetchNBATeams().then(fetchedTeams => {
-        setTeams(fetchedTeams);
-        setLoadingTeams(false);
-      });
-    } else {
-      fetchMLBTeams().then(fetchedTeams => {
-        setTeams(fetchedTeams);
-        setLoadingTeams(false);
-      });
-    }
+    const fetchTeams = sport === 'basketball/nba' ? fetchNBATeams : fetchMLBTeams;
+    fetchTeams().then(fetched => {
+      setTeams(fetched);
+      setLoadingTeams(false);
+    });
   }, [sport]);
 
   useEffect(() => {
@@ -211,14 +213,16 @@ export default function SportsCalendar() {
 
       {filteredEvents.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <a
-            href={generateGoogleCalendarBulkUrl(filteredEvents)}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            onClick={() => signInAndAddEvents(filteredEvents)}
+            style={{ marginBottom: 10, backgroundColor: '#4285F4', color: 'white', padding: '10px', border: 'none', borderRadius: '4px' }}
           >
-            <button style={{ marginRight: 10 }}>Add All to Google Calendar</button>
-          </a>
-          <button onClick={() => downloadICS(filteredEvents)}>Download All as iCal (.ics)</button>
+            Add All to Google Calendar
+          </button>
+
+          <button onClick={() => downloadICS(filteredEvents)}>
+            Download All as iCal (.ics)
+          </button>
         </div>
       )}
 
