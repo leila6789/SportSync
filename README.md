@@ -64,6 +64,6 @@ Do not commit `.env` or `.env.local`.
 
 ## Notes
 
-- Pro leagues load a month at a time (`dates=YYYYMM`).
-- College football’s scoreboard is organized by week. SportSync loads each FBS week that overlaps the month (`groups=80`). A very large `limit` on that endpoint returns only a partial slate, so week requests use `limit=300`.
+- Every league loads a month at a time (`dates=YYYYMM`).
+- College football uses that same scoreboard with `groups=80`, which is the FBS slate. Without the group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
 - Team pickers for college football list FBS programs, plus any other school that appears on the loaded slate.

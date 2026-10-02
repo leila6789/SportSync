@@ -1,13 +1,12 @@
 import { endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
 
 /**
- * ESPN public scoreboard. Pro leagues accept a YYYYMM month. College football
- * does not: a month code returns only the current week, and a very high
- * `limit` (about 900+) returns a partial slate. College games are loaded per
- * FBS week (group 80) with limit=300, which returns the full week.
+ * ESPN public scoreboard, one YYYYMM month at a time.
+ * College football needs groups=80 (FBS). Without it, a month query returns
+ * only the current week. limit=100 truncates a full college month, so every
+ * scoreboard request asks for 400.
  */
 const MONTH_LIMIT = 400;
-const COLLEGE_LIMIT = 300;
 const FBS_GROUP = '80';
 
 export const LEAGUES = [
@@ -54,11 +53,9 @@ export const LEAGUES = [
 ];
 
 const monthCache = new Map();
-const weekCache = new Map();
 
 export function resetScheduleCache() {
   monthCache.clear();
-  weekCache.clear();
 }
 
 export function leagueById(id) {
@@ -79,7 +76,8 @@ async function fetchJson(url) {
 
 export function scoreboardMonthUrl(league, year, month) {
   const ym = `${year}${pad(month)}`;
-  return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${ym}&limit=${MONTH_LIMIT}`;
+  const group = league.id === 'ncaaf' ? `&groups=${FBS_GROUP}` : '';
+  return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${ym}&limit=${MONTH_LIMIT}${group}`;
 }
 
 export function teamsUrl(league) {
@@ -276,70 +274,7 @@ export function eventsInPeriod(events, start, end) {
   return events.filter((event) => event.start >= start && event.start <= end);
 }
 
-export function weeksOverlappingMonth(calendar, year, month) {
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 1));
-  const weeks = [];
-  const seen = new Set();
-  for (const season of calendar || []) {
-    for (const entry of season.entries || []) {
-      if (entry.value == null || entry.value === '') continue;
-      const weekStart = new Date(entry.startDate);
-      const weekEnd = new Date(entry.endDate);
-      if (Number.isNaN(weekStart.getTime()) || Number.isNaN(weekEnd.getTime())) continue;
-      if (weekStart < end && start < weekEnd) {
-        const key = `${season.value}:${entry.value}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        weeks.push({
-          seasontype: season.value,
-          week: entry.value,
-          label: entry.label || '',
-        });
-      }
-    }
-  }
-  return weeks;
-}
-
-function collegeWeekUrl(league, seasonYear, seasontype, week) {
-  return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?week=${week}&year=${seasonYear}&seasontype=${seasontype}&groups=${FBS_GROUP}&limit=${COLLEGE_LIMIT}`;
-}
-
-async function fetchCollegeWeek(league, seasonYear, seasontype, week) {
-  const key = `${seasonYear}:${seasontype}:${week}`;
-  if (!weekCache.has(key)) {
-    const pending = fetchJson(collegeWeekUrl(league, seasonYear, seasontype, week)).catch((error) => {
-      weekCache.delete(key);
-      throw error;
-    });
-    weekCache.set(key, pending);
-  }
-  return weekCache.get(key);
-}
-
-async function loadCollegeFootballMonth(league, year, month) {
-  const seedUrl = `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${year}${pad(month)}15&groups=${FBS_GROUP}&limit=${COLLEGE_LIMIT}`;
-  const seed = await fetchJson(seedUrl);
-  const calendar = seed.leagues?.[0]?.calendar || [];
-  const seasonYear = seed.leagues?.[0]?.season?.year || year;
-  const weeks = weeksOverlappingMonth(calendar, year, month);
-  const results = await Promise.allSettled(
-    weeks.map((week) => fetchCollegeWeek(league, seasonYear, week.seasontype, week.week))
-  );
-  const payloads = [seed];
-  let failure = null;
-  for (const result of results) {
-    if (result.status === 'fulfilled') payloads.push(result.value);
-    else failure = result.reason;
-  }
-  const events = dedupeEvents(payloads.flatMap((payload) => normalizeEvents(league, payload)));
-  if (!events.length && failure) throw failure;
-  return events;
-}
-
 async function loadLeagueMonth(league, year, month) {
-  if (league.id === 'ncaaf') return loadCollegeFootballMonth(league, year, month);
   const data = await fetchJson(scoreboardMonthUrl(league, year, month));
   return normalizeEvents(league, data);
 }
