@@ -1,70 +1,69 @@
-# Getting Started with Create React App
+# SportSync
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A sports calendar for NBA, MLB, NFL, college football (NCAAF), and NHL. Pick leagues and teams, browse the schedule by month, week, or list, then take the games with you.
 
-## Available Scripts
+Schedules come from ESPN’s public scoreboard. No account is required.
 
-In the project directory, you can run:
+## Run it
 
-### `npm start`
+```bash
+npm install
+npm start
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Open [http://localhost:3000](http://localhost:3000).
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```bash
+npm test
+npm run build
+```
 
-### `npm test`
+## Use the calendar
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+- Turn leagues on or off. **NCAAF** is college football (the FBS slate). It sits with NBA, MLB, NFL, and NHL.
+- Search teams and check the ones you follow. Leave every team unchecked to see the full league schedule.
+- Switch **Month**, **Week**, and **List**. Click a game for the venue, broadcast, and export actions.
+- College Saturdays are crowded in month view. Use **List**, or the “+ more” link on a day, to read every game.
 
-### `npm run build`
+Your league and team choices are saved in this browser.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Export
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+The download and Google Calendar actions follow the leagues and teams you selected, for the month (or week) on screen.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### iCal (.ics)
 
-### `npm run eject`
+**Download .ics** saves a calendar file. Apple Calendar, Google Calendar, and Outlook can all import it.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+A subscription link (`webcal://`) is not included. Those feeds have to be hosted at a public URL so calendar apps can refresh them, and SportSync is a static web app. Download a fresh `.ics` file when you want an updated schedule. If you host that file yourself, you can subscribe to it from your calendar app.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### Google Calendar
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+Two paths work without any API key:
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+1. Open a game and choose **Add to Google Calendar**. Google opens a new event with the title, time, location, and details filled in. Save it.
+2. Download the `.ics` file, then open **Add to Google Calendar → Open Google Calendar import** and import the file (Settings → Import & export). That adds every game in the current filtered view.
 
-## Learn More
+### Optional direct sync
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+To create the filtered games on your primary Google Calendar from inside the app, set a Google OAuth client id:
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```bash
+cp .env.example .env.local
+```
 
-### Code Splitting
+```
+REACT_APP_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+In Google Cloud Console, create a **Web application** OAuth client, enable the **Google Calendar API**, and add `http://localhost:3000` (and your deployed origin) to **Authorized JavaScript origins**. Restart `npm start` after changing env vars. Create React App only exposes variables that start with `REACT_APP_`.
 
-### Analyzing the Bundle Size
+The sync button then appears in the Add to Google Calendar dialog. Games already added from SportSync are skipped. Per-game links and `.ics` download keep working if this variable is unset.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Do not commit `.env` or `.env.local`.
 
-### Making a Progressive Web App
+## Notes
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- Pro leagues load a month at a time (`dates=YYYYMM`).
+- College football’s scoreboard is organized by week. SportSync loads each FBS week that overlaps the month (`groups=80`). A very large `limit` on that endpoint returns only a partial slate, so week requests use `limit=300`.
+- Team pickers for college football list FBS programs, plus any other school that appears on the loaded slate.
