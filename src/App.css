@@ -112,6 +112,11 @@
   font-size: 20px;
 }
 
+.ss-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .ss-text-btn {
   border: 0;
   background: transparent;

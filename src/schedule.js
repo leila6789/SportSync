@@ -1,4 +1,4 @@
-import { endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
+import { endOfDay, endOfMonth, endOfWeek, startOfDay, startOfMonth, startOfWeek } from 'date-fns';
 
 /**
  * ESPN public scoreboard. College football needs a group: 80 is FBS, 8 is the SEC,
@@ -328,7 +328,10 @@ export function monthsFromRange(range) {
   return months;
 }
 
-export function periodBounds(view, cursor) {
+export function periodBounds(view, cursor, now = new Date()) {
+  if (view === 'today') {
+    return { start: startOfDay(now), end: endOfDay(now) };
+  }
   if (view === 'week') {
     const start = startOfWeek(cursor, { weekStartsOn: 0 });
     const end = endOfWeek(cursor, { weekStartsOn: 0 });
@@ -433,7 +436,8 @@ export function leaguesForTeams(leagueIds, teamKeys) {
   return LEAGUES.filter((league) => ids.has(league.id));
 }
 
-export function monthsForView(view, cursor) {
+export function monthsForView(view, cursor, now = new Date()) {
+  if (view === 'today') return monthsFromRange(periodBounds('today', cursor, now));
   if (view === 'list') {
     return [{ year: cursor.getFullYear(), month: cursor.getMonth() + 1 }];
   }

@@ -94,6 +94,7 @@ function formatWhen(event) {
 }
 
 function periodTitle(view, cursor) {
+  if (view === 'today') return format(new Date(), 'EEEE, MMMM d');
   if (view === 'week') {
     const { start, end } = periodBounds('week', cursor);
     if (start.getMonth() === end.getMonth()) {
@@ -451,13 +452,14 @@ export default function SportsCalendar() {
           <div className="ss-toolbar">
             <div className="ss-nav">
               <button type="button" className="ss-btn" onClick={() => setCursor(new Date())}>Today</button>
-              <button type="button" className="ss-icon-btn" aria-label="Previous" onClick={() => shift(-1)}>‹</button>
-              <button type="button" className="ss-icon-btn" aria-label="Next" onClick={() => shift(1)}>›</button>
+              <button type="button" className="ss-icon-btn" aria-label="Previous" onClick={() => shift(-1)} disabled={view === 'today'}>‹</button>
+              <button type="button" className="ss-icon-btn" aria-label="Next" onClick={() => shift(1)} disabled={view === 'today'}>›</button>
               <h2>{label}</h2>
             </div>
             <p className="ss-count" role="status">{countLabel}</p>
             <div className="ss-views" role="group" aria-label="Calendar view">
               {[
+                ['today', "Today's games"],
                 ['month', 'Month'],
                 ['week', 'Week'],
                 ['list', 'List'],
@@ -495,12 +497,13 @@ export default function SportsCalendar() {
 
           {pending > 0 && <div className="ss-loading" role="status">Loading schedules…</div>}
 
-          {view === 'list' ? (
+          {view === 'list' || view === 'today' ? (
             <ListView
               events={periodEvents}
               pending={pending}
               leagueIds={leagueIds}
               teamKeys={teamKeys}
+              today={view === 'today'}
               onOpen={(event) => setDialog({ type: 'event', event })}
               onClearTeams={() => setTeamKeys([])}
               onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
@@ -578,12 +581,20 @@ function hasScore(event) {
     && event.homeScore !== '';
 }
 
-function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues }) {
+function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues, today = false }) {
   if (!teamKeys.length) {
     return (
       <div className="ss-empty">
         <h3>No games yet</h3>
         <p>Pick a team to see its games.</p>
+      </div>
+    );
+  }
+  if (today) {
+    return (
+      <div className="ss-empty">
+        <h3>No games today</h3>
+        <p>None of the selected teams play today.</p>
       </div>
     );
   }
@@ -599,13 +610,14 @@ function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues }) {
   );
 }
 
-function ListView({ events, pending, leagueIds, teamKeys, onOpen, onClearTeams, onShowLeagues }) {
+function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen, onClearTeams, onShowLeagues }) {
   if (!events.length) {
     if (teamKeys.length && pending) return <p className="ss-muted ss-list-loading">Loading games…</p>;
     return (
       <EmptyState
         leagueIds={leagueIds}
         teamKeys={teamKeys}
+        today={today}
         onClearTeams={onClearTeams}
         onShowLeagues={onShowLeagues}
       />

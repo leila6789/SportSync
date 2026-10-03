@@ -157,6 +157,7 @@ export function buildFilename({ leagueIds, view, start }) {
   const year = start.getFullYear();
   const month = String(start.getMonth() + 1).padStart(2, '0');
   const day = String(start.getDate()).padStart(2, '0');
+  if (view === 'today') return `sportsync-${leagues}-today-${year}-${month}-${day}.ics`;
   if (view === 'week') return `sportsync-${leagues}-week-${year}-${month}-${day}.ics`;
   return `sportsync-${leagues}-${year}-${month}.ics`;
 }

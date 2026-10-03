@@ -303,6 +303,90 @@ test('filters SEC and Big Ten to the selected teams', async () => {
   expect(window.URL.createObjectURL).toHaveBeenCalled();
 });
 
+test('today view stays empty until a selected team plays today', async () => {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 19, 0, 0);
+  const later = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2, 19, 0, 0);
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('gamma-api.polymarket.com')) return jsonResponse([]);
+    if (href.includes('kalshi.com')) return jsonResponse({ markets: [], cursor: '' });
+    if (href.includes('/teams')) {
+      const teams = href.includes('/nba/')
+        ? [
+          { team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
+          { team: { id: '13', displayName: 'Los Angeles Lakers', abbreviation: 'LAL' } },
+        ]
+        : [];
+      return jsonResponse({ sports: [{ leagues: [{ teams }] }] });
+    }
+    if (href.includes('basketball/nba/scoreboard') && !href.includes('limit=1')) {
+      return jsonResponse({
+        events: [{
+          id: 'today-game',
+          date: today.toISOString(),
+          name: 'Boston Celtics at Cleveland Cavaliers',
+          season: { slug: 'regular-season' },
+          competitions: [competition(
+            { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' },
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+            {
+              status: { type: { state: 'in', description: 'In Progress' } },
+              competitors: [
+                { homeAway: 'home', score: '40', team: { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' } },
+                { homeAway: 'away', score: '38', team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
+              ],
+            },
+          )],
+        }, {
+          id: 'later-game',
+          date: later.toISOString(),
+          name: 'Los Angeles Lakers at Boston Celtics',
+          season: { slug: 'regular-season' },
+          competitions: [competition(
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+            { id: '13', displayName: 'Los Angeles Lakers', abbreviation: 'LAL' },
+          )],
+        }],
+      });
+    }
+    if (href.includes('scoreboard')) {
+      return jsonResponse({
+        leagues: [{ calendar: [today.toISOString(), later.toISOString()] }],
+      });
+    }
+    return jsonResponse({ events: [] });
+  });
+
+  render(<App />);
+  expect(screen.getByRole('button', { name: 'Month', pressed: true })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: "Today's games" }));
+  expect(screen.getByRole('button', { name: "Today's games", pressed: true })).toBeInTheDocument();
+  expect(screen.getByText('Pick a team to see its games.')).toBeInTheDocument();
+  expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
+  expect(screen.queryByText('Los Angeles Lakers at Boston Celtics')).not.toBeInTheDocument();
+
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Los Angeles Lakers' }));
+  expect(await screen.findByText('No games today')).toBeInTheDocument();
+  expect(screen.queryByText('Los Angeles Lakers at Boston Celtics')).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Boston Celtics' }));
+  expect(await screen.findByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
+  expect(screen.getByText(/7:00 PM/)).toBeInTheDocument();
+  expect(screen.getByText(/38–40/)).toBeInTheDocument();
+  expect(screen.getByText(/In Progress/)).toBeInTheDocument();
+  expect(screen.queryByText('Los Angeles Lakers at Boston Celtics')).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole('button', { name: 'Boston Celtics at Cleveland Cavaliers' }));
+  expect(screen.getByText('BOS 38')).toBeInTheDocument();
+  expect(screen.getByText('CLE 40')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+  await userEvent.click(screen.getByRole('button', { name: 'Month' }));
+  expect(screen.getByRole('button', { name: 'Month', pressed: true })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: "Today's games", pressed: false })).toBeInTheDocument();
+});
+
 test('shows a later published month for the selected league', async () => {
   global.fetch = jest.fn(async (url) => {
     const href = String(url);

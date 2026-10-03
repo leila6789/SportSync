@@ -9,6 +9,7 @@ import {
   filterEvents,
   monthsForView,
   monthsFromEspnCalendar,
+  periodBounds,
   normalizeEvents,
   resetScheduleCache,
   scoreboardMonthUrl,
@@ -115,6 +116,12 @@ test('month view includes the leading week', () => {
     { year: 2026, month: 10 },
   ]);
   expect(monthsForView('list', new Date(2026, 9, 2))).toEqual([{ year: 2026, month: 10 }]);
+  const now = new Date(2026, 9, 3, 15, 30);
+  expect(periodBounds('today', new Date(2026, 0, 1), now)).toEqual({
+    start: new Date(2026, 9, 3, 0, 0, 0, 0),
+    end: new Date(2026, 9, 3, 23, 59, 59, 999),
+  });
+  expect(monthsForView('today', new Date(2026, 0, 1), now)).toEqual([{ year: 2026, month: 10 }]);
 });
 
 test('loads college football from the FBS month scoreboard', async () => {
