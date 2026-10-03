@@ -507,6 +507,31 @@
   font-family: Fraunces, Georgia, serif;
 }
 
+.ss-score {
+  display: flex;
+  gap: 16px;
+  margin: 8px 0;
+  font-family: Fraunces, Georgia, serif;
+  font-size: 28px;
+}
+
+.ss-odds {
+  margin: 12px 0;
+}
+
+.ss-odds h3,
+.ss-odds-source p {
+  margin: 0 0 4px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ss-odds ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+
 .ss-list-loading {
   padding: 12px;
 }

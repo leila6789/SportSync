@@ -20,6 +20,7 @@ import {
   singleEventFilename,
 } from './CalendarExport';
 import { isGoogleSyncConfigured, signInAndAddEvents } from './GoogleCalendarSync';
+import { fetchGameOdds } from './odds';
 import {
   LEAGUES,
   collapseConferenceDuplicates,
@@ -27,7 +28,9 @@ import {
   eventsInPeriod,
   fetchLeagueMonth,
   fetchLeagueTeams,
+  fetchPublishedMonths,
   filterEvents,
+  leaguesForTeams,
   mergeTeams,
   monthsForView,
   periodBounds,
@@ -129,8 +132,10 @@ export default function SportsCalendar() {
   const [dialog, setDialog] = useState(null);
   const [notice, setNotice] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
   const cacheRef = useRef(new Map());
   const inflight = useRef(new Map());
+  const seasonRef = useRef(new Set());
 
   useEffect(() => {
     writeFilters(leagueIds, teamKeys);
@@ -150,9 +155,9 @@ export default function SportsCalendar() {
     };
   }, []);
 
-  const ensureMonths = useCallback((months) => {
+  const loadMonths = useCallback((leagues, months) => {
     const jobs = [];
-    for (const league of LEAGUES) {
+    for (const league of leagues) {
       for (const ym of months) {
         const key = `${league.id}:${ym.year}-${ym.month}`;
         if (cacheRef.current.has(key) || inflight.current.has(key)) continue;
@@ -179,9 +184,39 @@ export default function SportsCalendar() {
     if (jobs.length) setPending((count) => count + jobs.length);
   }, []);
 
+  const activeLeagues = useMemo(
+    () => leaguesForTeams(leagueIds, teamKeys),
+    [leagueIds, teamKeys]
+  );
+
   useEffect(() => {
-    ensureMonths(monthsForView(view, cursor));
-  }, [view, cursor, ensureMonths]);
+    if (!activeLeagues.length) return undefined;
+    const gate = { cancel: false };
+    const started = [];
+    const season = seasonRef.current;
+    for (const league of activeLeagues) {
+      if (season.has(league.id)) continue;
+      const current = league;
+      season.add(current.id);
+      started.push(current.id);
+      fetchPublishedMonths(current)
+        .then((months) => {
+          if (!gate.cancel && months.length) loadMonths([current], months);
+        })
+        .catch(() => {
+          season.delete(current.id);
+        });
+    }
+    return () => {
+      gate.cancel = true;
+      for (const id of started) season.delete(id);
+    };
+  }, [activeLeagues, loadMonths, reloadToken]);
+
+  useEffect(() => {
+    if (!activeLeagues.length) return;
+    loadMonths(activeLeagues, monthsForView(view, cursor));
+  }, [activeLeagues, view, cursor, loadMonths, reloadToken]);
 
   useEffect(() => {
     if (!dialog) return undefined;
@@ -220,21 +255,24 @@ export default function SportsCalendar() {
 
   const leagueCounts = useMemo(() => {
     const counts = Object.fromEntries(LEAGUES.map((league) => [league.id, 0]));
+    if (!teamKeys.length) return counts;
     const inPeriod = eventsInPeriod(allEvents, period.start, period.end);
     for (const event of inPeriod) {
-      if (teamKeys.length && !teamKeys.includes(event.homeKey) && !teamKeys.includes(event.awayKey)) continue;
+      if (!teamKeys.includes(event.homeKey) && !teamKeys.includes(event.awayKey)) continue;
       counts[event.leagueId] += 1;
     }
     return counts;
   }, [allEvents, period, teamKeys]);
 
   const visibleMonthKeys = monthsForView(view, cursor).flatMap((ym) => (
-    LEAGUES.map((league) => `${league.id}:${ym.year}-${ym.month}`)
+    activeLeagues.map((league) => `${league.id}:${ym.year}-${ym.month}`)
   ));
   const hasError = visibleMonthKeys.some((key) => errors[key]);
-  const countLabel = pending > 0 && periodEvents.length === 0
-    ? 'Loading games…'
-    : `${periodEvents.length} ${periodEvents.length === 1 ? 'game' : 'games'}`;
+  const countLabel = teamKeys.length === 0
+    ? 'No teams selected'
+    : pending > 0 && periodEvents.length === 0
+      ? 'Loading games…'
+      : `${periodEvents.length} ${periodEvents.length === 1 ? 'game' : 'games'}`;
 
   function shift(direction) {
     setCursor((current) => (view === 'week' ? addWeeks(current, direction) : addMonths(current, direction)));
@@ -259,7 +297,7 @@ export default function SportsCalendar() {
   }
 
   function handleDownload(events = periodEvents) {
-    if (!events.length) return;
+    if (!teamKeys.length || !events.length) return;
     const filename = events.length === 1
       ? singleEventFilename(events[0])
       : buildFilename({ leagueIds, view, start: period.start });
@@ -270,10 +308,11 @@ export default function SportsCalendar() {
   function retry() {
     cacheRef.current.clear();
     inflight.current.clear();
+    seasonRef.current.clear();
     resetScheduleCache();
     setStore({});
     setErrors({});
-    ensureMonths(monthsForView(view, cursor));
+    setReloadToken((value) => value + 1);
   }
 
   return (
@@ -306,12 +345,17 @@ export default function SportsCalendar() {
             type="button"
             className="ss-btn primary"
             onClick={() => handleDownload()}
-            disabled={!periodEvents.length}
+            disabled={!teamKeys.length || !periodEvents.length}
             aria-label={`Download iCal file for ${label}`}
           >
             Download .ics
           </button>
-          <button type="button" className="ss-btn" onClick={() => setDialog({ type: 'export' })}>
+          <button
+            type="button"
+            className="ss-btn"
+            onClick={() => setDialog({ type: 'export' })}
+            disabled={!teamKeys.length || !periodEvents.length}
+          >
             Add to Google Calendar
           </button>
         </div>
@@ -528,26 +572,36 @@ export default function SportsCalendar() {
   );
 }
 
+function hasScore(event) {
+  return (event.state === 'in' || event.state === 'post')
+    && event.awayScore !== ''
+    && event.homeScore !== '';
+}
+
 function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues }) {
+  if (!teamKeys.length) {
+    return (
+      <div className="ss-empty">
+        <h3>No games yet</h3>
+        <p>Pick a team to see its games.</p>
+      </div>
+    );
+  }
   return (
     <div className="ss-empty">
       <h3>No games in this view</h3>
       {leagueIds.length === 0 && (
         <button type="button" className="ss-btn" onClick={onShowLeagues}>Show all leagues</button>
       )}
-      {teamKeys.length > 0 && (
-        <button type="button" className="ss-btn" onClick={onClearTeams}>Clear team filters</button>
-      )}
-      {leagueIds.length > 0 && teamKeys.length === 0 && (
-        <p>Try another month, or turn on another league.</p>
-      )}
+      <button type="button" className="ss-btn" onClick={onClearTeams}>Clear team filters</button>
+      {leagueIds.length > 0 && <p>Try another month, or turn on another league.</p>}
     </div>
   );
 }
 
 function ListView({ events, pending, leagueIds, teamKeys, onOpen, onClearTeams, onShowLeagues }) {
   if (!events.length) {
-    if (pending) return <p className="ss-muted ss-list-loading">Loading games…</p>;
+    if (teamKeys.length && pending) return <p className="ss-muted ss-list-loading">Loading games…</p>;
     return (
       <EmptyState
         leagueIds={leagueIds}
@@ -575,6 +629,7 @@ function ListView({ events, pending, leagueIds, teamKeys, onOpen, onClearTeams, 
                     <span className="ss-league-name" style={{ color: event.color }}>{event.leagueName}</span>
                     {event.venue ? ` · ${event.venue}` : ''}
                     {event.broadcasts.length ? ` · ${event.broadcasts.join(', ')}` : ''}
+                    {hasScore(event) ? ` · ${event.awayScore}–${event.homeScore}` : ''}
                     {event.status && event.status !== 'Scheduled' ? ` · ${event.status}` : ''}
                   </p>
                 </div>
@@ -589,6 +644,40 @@ function ListView({ events, pending, leagueIds, teamKeys, onOpen, onClearTeams, 
         </section>
       ))}
     </div>
+  );
+}
+
+function GameOdds({ event }) {
+  const [state, setState] = useState({ loading: true, quotes: [], message: '' });
+
+  useEffect(() => {
+    let cancel = false;
+    setState({ loading: true, quotes: [], message: '' });
+    fetchGameOdds(event).then((result) => {
+      if (cancel) return;
+      setState({ loading: false, quotes: result.quotes, message: result.message });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [event]);
+
+  return (
+    <section className="ss-odds" aria-live="polite">
+      <h3>Odds</h3>
+      {state.loading && <p className="ss-muted">Checking Polymarket and Kalshi…</p>}
+      {!state.loading && state.quotes.map((quote) => (
+        <div key={quote.source} className="ss-odds-source">
+          <p>{quote.source}</p>
+          <ul>
+            {quote.sides.map((side) => (
+              <li key={`${quote.source}-${side.label}`}>{side.label} {side.price}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {!state.loading && !state.quotes.length && <p>{state.message}</p>}
+    </section>
   );
 }
 
@@ -612,6 +701,13 @@ function EventDialog({ event, onClose, onDownload }) {
         <h2 id="ss-event-title">{event.fullTitle}</h2>
         <p>{formatWhen(event)}</p>
         {event.venue && <p>{event.venue}</p>}
+        {hasScore(event) && (
+          <p className="ss-score">
+            <span>{event.awayAbbr || event.awayTeam} {event.awayScore}</span>
+            <span>{event.homeAbbr || event.homeTeam} {event.homeScore}</span>
+          </p>
+        )}
+        {event.state !== 'in' && event.state !== 'post' && <GameOdds event={event} />}
         <p className="ss-muted">
           {[event.seasonLabel, event.status, event.broadcasts.join(', '), event.headline]
             .filter(Boolean)
@@ -643,7 +739,7 @@ function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload 
   }, []);
 
   const leagueLabel = LEAGUES.filter((league) => leagueIds.includes(league.id)).map((league) => league.name).join(', ') || 'no leagues';
-  const teamLabel = teamKeys.length ? `${teamKeys.length} selected team${teamKeys.length === 1 ? '' : 's'}` : 'every team';
+  const teamLabel = teamKeys.length ? `${teamKeys.length} selected team${teamKeys.length === 1 ? '' : 's'}` : 'no teams';
 
   async function sync() {
     setSyncing(true);

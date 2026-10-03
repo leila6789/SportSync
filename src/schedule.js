@@ -1,12 +1,17 @@
 import { endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
 
 /**
- * ESPN public scoreboard, one YYYYMM month at a time.
- * College football needs a group: 80 is FBS, 8 is the SEC, and 5 is the Big Ten.
- * Without a group, a month query returns only the current week. limit=100
- * truncates a full college month, so every scoreboard request asks for 400.
+ * ESPN public scoreboard. College football needs a group: 80 is FBS, 8 is the SEC,
+ * and 5 is the Big Ten. Without a group, a month query returns only the current week.
+ * College months use limit=400. A higher limit returns a partial college slate.
+ * MLB months need limit=1000 or May is cut off around 400 games.
+ * Published months come from the scoreboard calendar, not only the month on screen.
  */
 const MONTH_LIMIT = 400;
+
+function monthLimit(league) {
+  return league.id === 'mlb' ? 1000 : MONTH_LIMIT;
+}
 
 export const LEAGUES = [
   {
@@ -105,12 +110,33 @@ async function fetchJson(url) {
 export function scoreboardMonthUrl(league, year, month) {
   const ym = `${year}${pad(month)}`;
   const group = league.group ? `&groups=${league.group}` : '';
-  return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${ym}&limit=${MONTH_LIMIT}${group}`;
+  return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${ym}&limit=${monthLimit(league)}${group}`;
+}
+
+/** Lightweight scoreboard used to read leagues[0].calendar. `year` asks for that season. */
+export function scoreboardCalendarUrl(league, year) {
+  const group = league.group ? `&groups=${league.group}` : '';
+  const dates = year ? `&dates=${year}` : '';
+  return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?limit=1${dates}${group}`;
 }
 
 export function teamsUrl(league) {
   const limit = league.path === 'football/college-football' ? 1000 : 100;
   return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/teams?limit=${limit}`;
+}
+
+/**
+ * The site.api teams list does not send CORS headers, so the browser cannot
+ * read it. The core API does. Pro leagues use the league team index; college
+ * groups already come from the core API.
+ */
+export function coreTeamsUrl(league) {
+  const [sport, slug] = league.path.split('/');
+  return `https://sports.core.api.espn.com/v2/sports/${sport}/leagues/${slug}/teams?limit=100`;
+}
+
+function httpsRef(ref) {
+  return String(ref || '').replace(/^http:\/\//, 'https://');
 }
 
 /** Fall season year. Bowls in January still belong to the previous season. */
@@ -175,8 +201,11 @@ export function normalizeEvents(league, data) {
     if (!event?.id || !event.date) return [];
     const competition = event.competitions?.[0] || {};
     const competitors = competition.competitors || [];
-    const home = competitors.find((c) => c.homeAway === 'home')?.team || {};
-    const away = competitors.find((c) => c.homeAway === 'away')?.team || {};
+    const homeSide = competitors.find((c) => c.homeAway === 'home') || {};
+    const awaySide = competitors.find((c) => c.homeAway === 'away') || {};
+    const home = homeSide.team || {};
+    const away = awaySide.team || {};
+    const scoreText = (value) => (value == null || value === '' ? '' : String(value));
     const timeValid = competition.timeValid !== false;
     const headline = (competition.notes || []).map((note) => note.headline).filter(Boolean).join(' · ');
     const bothTbd = isTbd(home) && isTbd(away);
@@ -228,6 +257,9 @@ export function normalizeEvents(league, data) {
       venue: venueLabel(competition),
       broadcasts: broadcastNames(competition),
       status: competition.status?.type?.description || event.status?.type?.description || '',
+      state: competition.status?.type?.state || event.status?.type?.state || 'pre',
+      homeScore: scoreText(homeSide.score),
+      awayScore: scoreText(awaySide.score),
       headline,
       seasonLabel: seasonLabel(event.season?.slug),
       url: link?.href || '',
@@ -254,7 +286,7 @@ export function filterEvents(events, { leagueIds, teamKeys }) {
   const teams = teamKeys || [];
   return events.filter((event) => {
     if (!leagues.has(event.leagueId)) return false;
-    if (!teams.length) return true;
+    if (!teams.length) return false;
     return teams.includes(event.homeKey) || teams.includes(event.awayKey);
   });
 }
@@ -305,6 +337,102 @@ export function periodBounds(view, cursor) {
   return { start: startOfMonth(cursor), end: endOfMonth(cursor) };
 }
 
+function yearMonthFromStamp(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})/);
+  if (!match) return null;
+  return { year: Number(match[1]), month: Number(match[2]) };
+}
+
+function compareMonths(a, b) {
+  return a.year - b.year || a.month - b.month;
+}
+
+/** Inclusive month list from the earliest stamp to the latest. */
+export function fillMonths(points) {
+  if (!points.length) return [];
+  const sorted = [...points].sort(compareMonths);
+  const start = sorted[0];
+  const end = sorted[sorted.length - 1];
+  const months = [];
+  let year = start.year;
+  let month = start.month;
+  while (year < end.year || (year === end.year && month <= end.month)) {
+    months.push({ year, month });
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return months;
+}
+
+export function mergeMonths(lists) {
+  const map = new Map();
+  for (const list of lists) {
+    for (const item of list || []) map.set(`${item.year}-${item.month}`, item);
+  }
+  return [...map.values()].sort(compareMonths);
+}
+
+/**
+ * ESPN calendars are either game-day timestamps or season-type blocks of weeks.
+ * A flat list with a missing month (MLB's milestone dates) is filled in.
+ * A dense list (NBA) keeps only the months that appear.
+ * Week blocks use the first and last entry, and skip empty off-season blocks.
+ */
+export function monthsFromEspnCalendar(calendar) {
+  if (!Array.isArray(calendar) || !calendar.length) return [];
+  const stamps = [];
+  const flat = calendar.every((item) => typeof item === 'string');
+  for (const item of calendar) {
+    if (typeof item === 'string') {
+      stamps.push(item);
+      continue;
+    }
+    const entries = Array.isArray(item?.entries) ? item.entries : null;
+    if (entries) {
+      for (const entry of entries) {
+        if (entry?.startDate) stamps.push(entry.startDate);
+        if (entry?.endDate) stamps.push(entry.endDate);
+      }
+      continue;
+    }
+    if (item?.startDate) stamps.push(item.startDate);
+    if (item?.endDate) stamps.push(item.endDate);
+  }
+  const points = stamps.map(yearMonthFromStamp).filter(Boolean);
+  if (!points.length) return [];
+  const filled = fillMonths(points);
+  if (!flat) return filled;
+  const present = mergeMonths([points]);
+  return present.length === filled.length ? present : filled;
+}
+
+export async function fetchPublishedMonths(league, now = new Date()) {
+  const years = [undefined, now.getFullYear() + 1];
+  const lists = [];
+  for (const year of years) {
+    try {
+      const data = await fetchJson(scoreboardCalendarUrl(league, year));
+      lists.push(monthsFromEspnCalendar(data?.leagues?.[0]?.calendar));
+    } catch {
+      lists.push([]);
+    }
+  }
+  return mergeMonths(lists);
+}
+
+export function leaguesForTeams(leagueIds, teamKeys) {
+  const on = new Set(leagueIds);
+  const ids = new Set();
+  for (const key of teamKeys || []) {
+    const id = String(key).split(':')[0];
+    if (on.has(id)) ids.add(id);
+  }
+  return LEAGUES.filter((league) => ids.has(league.id));
+}
+
 export function monthsForView(view, cursor) {
   if (view === 'list') {
     return [{ year: cursor.getFullYear(), month: cursor.getMonth() + 1 }];
@@ -336,36 +464,74 @@ export function fetchLeagueMonth(league, year, month) {
   return monthCache.get(key);
 }
 
-async function fetchGroupTeamIds(seasonYear, groupId) {
-  const ids = new Set();
+async function fetchGroupTeamRefs(seasonYear, groupId) {
+  const refs = [];
   let page = 1;
   let pageCount = 1;
   while (page <= pageCount && page <= 5) {
     const data = await fetchJson(`${fbsTeamsUrl(seasonYear, groupId)}&page=${page}`);
     pageCount = data.pageCount || 1;
     for (const item of data.items || []) {
-      const id = collegeTeamIdFromRef(item.$ref);
-      if (id) ids.add(id);
+      if (item?.$ref) refs.push(item.$ref);
     }
     if (!(data.items || []).length) break;
     page += 1;
   }
-  return ids;
+  return refs;
+}
+
+function teamFromCore(league, data) {
+  if (!data?.id || !data.displayName) return null;
+  const abbreviation = data.abbreviation || '';
+  if (!abbreviation || abbreviation === 'TBD') return null;
+  return {
+    key: `${league.id}:${data.id}`,
+    id: String(data.id),
+    leagueId: league.id,
+    name: data.displayName,
+    abbreviation,
+  };
+}
+
+async function mapPool(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index]);
+    }
+  }
+  const workers = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return results;
+}
+
+async function teamsFromRefs(league, refs) {
+  const details = await mapPool(refs, 12, (ref) => fetchJson(httpsRef(ref)).catch(() => null));
+  const directory = details.find((item) => item?.sports);
+  if (directory) {
+    const ids = new Set(refs.map((ref) => collegeTeamIdFromRef(ref)).filter(Boolean));
+    const teams = normalizeTeams(league, directory);
+    return ids.size ? teams.filter((team) => ids.has(team.id)) : teams;
+  }
+  return details
+    .map((item) => teamFromCore(league, item))
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function fetchLeagueTeams(league, now = new Date()) {
   if (!league.group) {
-    const data = await fetchJson(teamsUrl(league));
-    return normalizeTeams(league, data);
+    const data = await fetchJson(coreTeamsUrl(league));
+    if (data?.sports) return normalizeTeams(league, data);
+    const refs = (data?.items || []).map((item) => item.$ref).filter(Boolean);
+    return teamsFromRefs(league, refs);
   }
-  const [directory, ids] = await Promise.all([
-    fetchJson(teamsUrl(league)),
-    fetchGroupTeamIds(collegeSeasonYear(now), league.group),
-  ]);
-  const teams = normalizeTeams(league, directory).filter((team) => ids.has(team.id));
-  if (teams.length) return teams;
-  if (!ids.size && league.id === 'ncaaf') return normalizeTeams(league, directory);
-  return teams;
+  const refs = await fetchGroupTeamRefs(collegeSeasonYear(now), league.group);
+  if (!refs.length) return [];
+  return teamsFromRefs(league, refs);
 }
 
 export function mergeTeams(teams, events) {

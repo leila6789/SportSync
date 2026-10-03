@@ -21,7 +21,7 @@ npm run build
 ## Use the calendar
 
 - Turn leagues on or off. **NCAAF** is the full FBS slate. **SEC** and **Big Ten** are those conferences on their own. NBA, MLB, NFL, and NHL stay alongside them.
-- Search teams and check the ones you follow. Leave every team unchecked to see the full league schedule.
+- Search teams and check the ones you follow. The calendar stays empty until at least one team is checked. A team you already picked in this browser is restored on the next visit.
 - Switch **Month**, **Week**, and **List**. Click a game for the venue, broadcast, and export actions.
 - College Saturdays are crowded in month view. Use **List**, or the “+ more” link on a day, to read every game.
 
@@ -29,7 +29,7 @@ Your league and team choices are saved in this browser.
 
 ## Export
 
-The download and Google Calendar actions follow the leagues and teams you selected, for the month (or week) on screen.
+The download and Google Calendar actions follow the teams you selected, for the month (or week) on screen. Both stay unavailable until a team is picked.
 
 ### iCal (.ics)
 
@@ -64,7 +64,8 @@ Do not commit `.env` or `.env.local`.
 
 ## Notes
 
-- Every league loads a month at a time (`dates=YYYYMM`).
+- After a team is picked, that league's published months are loaded from the ESPN scoreboard calendar (`leagues[0].calendar`), then each of those months is requested (`dates=YYYYMM`). Navigating the month or week uses that loaded schedule. Leagues with no selected team are not requested.
+- Click an upcoming game for Polymarket and Kalshi moneylines. Prices are shown only when that site has a market for the same teams and start. Past and live games show the ESPN score.
 - College football uses that same scoreboard with an ESPN group. `groups=80` is the FBS slate (NCAAF). `groups=8` is the SEC. `groups=5` is the Big Ten. Without a group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
 - A game on both the FBS slate and a conference slate is shown once. The conference label wins when that conference is selected.
-- Team pickers list the programs in that group, plus any other school that appears on the loaded slate.
+- Team pickers read ESPN’s core team API (the public site team list does not allow browser requests). College pickers are the programs in that ESPN group.

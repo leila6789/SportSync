@@ -137,16 +137,30 @@ beforeEach(() => {
   });
 });
 
-test('shows pro and college games, then filters and exports them', async () => {
+test('starts empty until a team is picked, then exports that team', async () => {
   render(<App />);
   expect(screen.getByRole('heading', { name: 'SportSync' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /NCAAF/ })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'SEC', pressed: true })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Big Ten', pressed: true })).toBeInTheDocument();
+  expect(screen.getByText('Pick a team to see its games.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Download iCal/i })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Add to Google Calendar' })).toBeDisabled();
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalled();
+  });
+  expect(global.fetch.mock.calls.some(([url]) => String(url).includes('scoreboard'))).toBe(false);
 
+  await userEvent.click(screen.getByRole('button', { name: 'Week' }));
+  expect(screen.getByText('Pick a team to see its games.')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: 'List' }));
+  expect(screen.queryByText('Alabama Crimson Tide at Georgia Bulldogs')).not.toBeInTheDocument();
+  expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
+
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Alabama');
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Alabama Crimson Tide' }));
   expect(await screen.findByText('Alabama Crimson Tide at Georgia Bulldogs')).toBeInTheDocument();
-  expect(screen.getByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
+  expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
+  expect(screen.queryByText('Vanderbilt Commodores at Georgia Bulldogs')).not.toBeInTheDocument();
 
   const links = screen.getAllByRole('link', { name: 'Add to Google Calendar' });
   const collegeLink = links.find((link) => link.getAttribute('href').includes('Alabama'));
@@ -156,47 +170,105 @@ test('shows pro and college games, then filters and exports them', async () => {
   expect(href.searchParams.get('text')).toBe('Alabama Crimson Tide at Georgia Bulldogs');
   expect(href.searchParams.get('dates')).toBe('20261003T230000Z/20261004T023000Z');
 
-  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Alabama');
-  await userEvent.click(screen.getByRole('checkbox', { name: 'Alabama Crimson Tide' }));
-  await waitFor(() => {
-    expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
-  });
-  expect(screen.getByText('Alabama Crimson Tide at Georgia Bulldogs')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Alabama Crimson Tide at Georgia Bulldogs' }));
+  expect(await screen.findByText('Odds are not posted yet.')).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
   expect(window.URL.createObjectURL).toHaveBeenCalled();
 });
 
-test('filters the calendar to SEC and Big Ten games', async () => {
-  render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: 'List' }));
-  expect(await screen.findByText('Vanderbilt Commodores at Georgia Bulldogs')).toBeInTheDocument();
-  expect(screen.getByText('Ohio State Buckeyes at Iowa Hawkeyes')).toBeInTheDocument();
-
-  for (const name of ['NBA', 'MLB', 'NFL', 'NCAAF College football', 'NHL', 'Big Ten']) {
-    await userEvent.click(screen.getByRole('button', { name, pressed: true }));
-  }
-  await waitFor(() => {
-    expect(screen.queryByText('Ohio State Buckeyes at Iowa Hawkeyes')).not.toBeInTheDocument();
-    expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
-  });
-  expect(screen.getByText('Vanderbilt Commodores at Georgia Bulldogs')).toBeInTheDocument();
-
-  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Vanderbilt');
-  await userEvent.click(screen.getByRole('checkbox', { name: 'Vanderbilt Commodores' }));
-  expect(screen.getByText('Vanderbilt Commodores at Georgia Bulldogs')).toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
-  expect(window.URL.createObjectURL).toHaveBeenCalled();
-});
-
-test('hides college football when NCAAF is turned off', async () => {
+test('restores a saved team and still filters by league', async () => {
+  localStorage.setItem('sportsync.filters.v2', JSON.stringify({
+    leagueIds: ['nba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl'],
+    teamKeys: ['ncaaf:333', 'nba:2'],
+  }));
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: 'List' }));
   expect(await screen.findByText('Alabama Crimson Tide at Georgia Bulldogs')).toBeInTheDocument();
+  expect(screen.getByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: /NCAAF/ }));
   await waitFor(() => {
     expect(screen.queryByText('Alabama Crimson Tide at Georgia Bulldogs')).not.toBeInTheDocument();
   });
   expect(screen.getByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
+});
+
+test('filters SEC and Big Ten to the selected teams', async () => {
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: 'List' }));
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Vanderbilt');
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Vanderbilt Commodores' }));
+  expect(await screen.findByText('Vanderbilt Commodores at Georgia Bulldogs')).toBeInTheDocument();
+  expect(screen.queryByText('Ohio State Buckeyes at Iowa Hawkeyes')).not.toBeInTheDocument();
+
+  await userEvent.clear(screen.getByRole('searchbox', { name: 'Search teams' }));
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Ohio State');
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Ohio State Buckeyes' }));
+  expect(await screen.findByText('Ohio State Buckeyes at Iowa Hawkeyes')).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole('button', { name: 'Big Ten', pressed: true }));
+  await waitFor(() => {
+    expect(screen.queryByText('Ohio State Buckeyes at Iowa Hawkeyes')).not.toBeInTheDocument();
+  });
+  expect(screen.getByText('Vanderbilt Commodores at Georgia Bulldogs')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
+  expect(window.URL.createObjectURL).toHaveBeenCalled();
+});
+
+test('shows a later published month for the selected league', async () => {
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('/teams')) {
+      const teams = href.includes('/nba/')
+        ? [{ team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } }]
+        : [];
+      return jsonResponse({ sports: [{ leagues: [{ teams }] }] });
+    }
+    if (href.includes('dates=202611')) {
+      return jsonResponse({
+        events: [{
+          id: 'nba-nov',
+          date: '2026-11-03T23:00:00.000Z',
+          name: 'Boston Celtics at New York Knicks',
+          season: { slug: 'regular-season' },
+          competitions: [competition(
+            { id: '18', displayName: 'New York Knicks', abbreviation: 'NY' },
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+          )],
+        }],
+      });
+    }
+    if (href.includes('dates=202610')) {
+      return jsonResponse({
+        events: [{
+          id: 'nba1',
+          date: '2026-10-08T23:00:00.000Z',
+          name: 'Boston Celtics at Cleveland Cavaliers',
+          season: { slug: 'preseason' },
+          competitions: [competition(
+            { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' },
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+          )],
+        }],
+      });
+    }
+    if (href.includes('scoreboard')) {
+      return jsonResponse({
+        leagues: [{ calendar: ['2026-10-03T00:00:00Z', '2026-11-03T00:00:00Z', '2026-12-01T00:00:00Z'] }],
+      });
+    }
+    return jsonResponse({ events: [] });
+  });
+
+  render(<App />);
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Boston Celtics' }));
+  await userEvent.click(screen.getByRole('button', { name: 'List' }));
+  expect(await screen.findByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+  expect(await screen.findByText('Boston Celtics at New York Knicks')).toBeInTheDocument();
+  expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Week' }));
+  expect(screen.getByText('BOS @ NY')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Month' }));
+  expect(screen.getByText('BOS @ NY')).toBeInTheDocument();
 });

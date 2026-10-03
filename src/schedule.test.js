@@ -5,8 +5,10 @@ import {
   fetchLeagueMonth,
   fetchLeagueTeams,
   collapseConferenceDuplicates,
+  fetchPublishedMonths,
   filterEvents,
   monthsForView,
+  monthsFromEspnCalendar,
   normalizeEvents,
   resetScheduleCache,
   scoreboardMonthUrl,
@@ -101,7 +103,7 @@ test('filters by league and team', () => {
   const events = normalizeEvents(ncaaf, { events: [game('9', 'Pittsburgh Panthers at Virginia Tech Hokies')] });
   const nbaEvents = normalizeEvents(nba, { events: [game('8', 'Celtics at Knicks')] });
   const all = [...events, ...nbaEvents];
-  expect(filterEvents(all, { leagueIds: ['ncaaf'], teamKeys: [] })).toHaveLength(1);
+  expect(filterEvents(all, { leagueIds: ['ncaaf'], teamKeys: [] })).toHaveLength(0);
   expect(filterEvents(all, { leagueIds: ['ncaaf', 'nba'], teamKeys: ['ncaaf:259'] }).map((event) => event.id))
     .toEqual(['ncaaf-9']);
   expect(filterEvents(all, { leagueIds: ['nba'], teamKeys: ['ncaaf:259'] })).toHaveLength(0);
@@ -125,6 +127,8 @@ test('loads college football from the FBS month scoreboard', async () => {
   expect(scoreboardMonthUrl(sec, 2026, 10)).not.toContain('groups=80');
   expect(scoreboardMonthUrl(bigten, 2026, 10)).toContain('groups=5');
   expect(scoreboardMonthUrl(nba, 2026, 10)).not.toContain('groups=');
+  expect(scoreboardMonthUrl(nba, 2026, 10)).toContain('limit=400');
+  expect(scoreboardMonthUrl(LEAGUES.find((league) => league.id === 'mlb'), 2026, 5)).toContain('limit=1000');
 
   global.fetch = jest.fn(async (requested) => {
     expect(String(requested)).toBe(url);
@@ -134,6 +138,27 @@ test('loads college football from the FBS month scoreboard', async () => {
   const events = await fetchLeagueMonth(ncaaf, 2026, 10);
   expect(events.map((event) => event.id)).toEqual(['ncaaf-cfb']);
   expect(events[0].fullTitle).toBe('Pittsburgh Panthers at Virginia Tech Hokies');
+});
+
+test('loads pro teams from core team records', async () => {
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('/teams/14')) {
+      return jsonResponse({ id: '14', displayName: 'Miami Heat', abbreviation: 'MIA' });
+    }
+    return jsonResponse({
+      items: [{ $ref: 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2027/teams/14' }],
+    });
+  });
+  const teams = await fetchLeagueTeams(nba);
+  expect(teams).toEqual([{
+    key: 'nba:14',
+    id: '14',
+    leagueId: 'nba',
+    name: 'Miami Heat',
+    abbreviation: 'MIA',
+  }]);
+  expect(global.fetch.mock.calls.some(([url]) => String(url).includes('site.api.espn.com'))).toBe(false);
 });
 
 test('college team directory keeps FBS ids', async () => {
@@ -173,7 +198,63 @@ test('keeps one copy of a game that is both NCAAF and SEC', () => {
   const collapsed = collapseConferenceDuplicates([fbsGame, secGame, bigTenGame]);
   expect(collapsed.map((event) => event.id).sort()).toEqual(['bigten-10', 'sec-9']);
   expect(filterEvents(collapsed, { leagueIds: ['sec'], teamKeys: ['sec:221'] })).toHaveLength(1);
-  expect(filterEvents([fbsGame, secGame], { leagueIds: ['ncaaf'], teamKeys: [] }).map((event) => event.leagueId)).toEqual(['ncaaf']);
+  expect(filterEvents([fbsGame, secGame], { leagueIds: ['ncaaf'], teamKeys: ['ncaaf:259'] }).map((event) => event.leagueId)).toEqual(['ncaaf']);
+});
+
+test('keeps final scores and reads published months from every league calendar', async () => {
+  const [finalGame] = normalizeEvents(nba, {
+    events: [{
+      ...game('500', 'Boston Celtics at Cleveland Cavaliers'),
+      competitions: [{
+        ...game('500').competitions[0],
+        status: { type: { state: 'post', description: 'Final' } },
+        competitors: [
+          { homeAway: 'home', score: '98', team: { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' } },
+          { homeAway: 'away', score: '102', team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
+        ],
+      }],
+    }],
+  });
+  expect(finalGame).toMatchObject({ state: 'post', awayScore: '102', homeScore: '98' });
+
+  expect(monthsFromEspnCalendar([
+    '2026-10-03T07:00Z',
+    '2026-10-31T07:00Z',
+    '2026-11-02T07:00Z',
+    '2027-04-11T07:00Z',
+  ]).map((item) => `${item.year}-${item.month}`)).toEqual([
+    '2026-10', '2026-11', '2026-12', '2027-1', '2027-2', '2027-3', '2027-4',
+  ]);
+  expect(monthsFromEspnCalendar(['2026-02-19T08:00Z', '2026-11-11T08:00Z'])).toHaveLength(10);
+  expect(monthsFromEspnCalendar([
+    { label: 'Regular Season', entries: [{ startDate: '2026-09-06T07:00Z', endDate: '2026-09-16T06:59Z' }] },
+    { label: 'Off Season', entries: [] },
+    { label: 'Postseason', entries: [{ startDate: '2027-02-03T07:00Z', endDate: '2027-02-14T07:59Z' }] },
+  ])[0]).toEqual({ year: 2026, month: 9 });
+
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    const calendar = ['2026-10-03T00:00:00Z', '2026-11-15T00:00:00Z'];
+    if (href.includes('football')) {
+      return jsonResponse({ leagues: [{ calendar: [{ entries: [{ startDate: '2026-09-06T07:00Z', endDate: '2026-11-28T07:00Z' }] }] }] });
+    }
+    if (href.includes('dates=2027')) {
+      return jsonResponse({ leagues: [{ calendar: ['2027-02-02T00:00:00Z', '2027-04-11T00:00:00Z'] }] });
+    }
+    return jsonResponse({ leagues: [{ calendar }] });
+  });
+
+  const months = await fetchPublishedMonths(nba, new Date('2026-10-03T00:00:00Z'));
+  expect(months).toContainEqual({ year: 2026, month: 10 });
+  expect(months).toContainEqual({ year: 2026, month: 11 });
+  expect(months).toContainEqual({ year: 2027, month: 3 });
+  expect(months).not.toContainEqual({ year: 2027, month: 5 });
+
+  const nfl = LEAGUES.find((league) => league.id === 'nfl');
+  const secMonths = await fetchPublishedMonths(sec, new Date('2026-10-03T00:00:00Z'));
+  const nflMonths = await fetchPublishedMonths(nfl, new Date('2026-10-03T00:00:00Z'));
+  expect(secMonths.map((item) => item.month)).toEqual([9, 10, 11]);
+  expect(nflMonths.length).toBeGreaterThan(1);
 });
 
 test('SEC team list follows the SEC group', async () => {
