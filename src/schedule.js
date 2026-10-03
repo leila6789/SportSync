@@ -163,6 +163,62 @@ function seasonLabel(slug) {
   return String(slug).replace(/-/g, ' ');
 }
 
+function postedText(value) {
+  if (value == null || value === '') return '';
+  const text = String(value).trim();
+  if (!text || text === 'OFF' || text === 'N/A') return '';
+  return text;
+}
+
+function totalLine(value) {
+  return postedText(value).replace(/^[ou]/i, '');
+}
+
+function pushMarketSide(list, block, team) {
+  const line = postedText(block?.close?.line);
+  const price = postedText(block?.close?.odds);
+  if (!line && !price) return;
+  list.push({ team, line, price });
+}
+
+/** Lines from the ESPN scoreboard competition, the same response as the schedule. */
+export function readEspnOdds(competition, { homeAbbr = 'Home', awayAbbr = 'Away' } = {}) {
+  const entry = Array.isArray(competition?.odds) ? competition.odds[0] : null;
+  if (!entry || typeof entry !== 'object') return null;
+
+  const spread = [];
+  pushMarketSide(spread, entry.pointSpread?.away, awayAbbr);
+  pushMarketSide(spread, entry.pointSpread?.home, homeAbbr);
+  if (!spread.length && postedText(entry.spread)) {
+    spread.push({ team: homeAbbr, line: postedText(entry.spread), price: '' });
+  }
+
+  const moneyline = [];
+  const awayMoney = postedText(entry.moneyline?.away?.close?.odds);
+  const homeMoney = postedText(entry.moneyline?.home?.close?.odds);
+  if (awayMoney) moneyline.push({ team: awayAbbr, price: awayMoney });
+  if (homeMoney) moneyline.push({ team: homeAbbr, price: homeMoney });
+
+  const total = [];
+  const overLine = totalLine(entry.total?.over?.close?.line);
+  const underLine = totalLine(entry.total?.under?.close?.line);
+  const overPrice = postedText(entry.total?.over?.close?.odds);
+  const underPrice = postedText(entry.total?.under?.close?.odds);
+  if (overLine || overPrice) total.push({ label: 'Over', line: overLine, price: overPrice });
+  if (underLine || underPrice) total.push({ label: 'Under', line: underLine, price: underPrice });
+  if (!total.length && postedText(entry.overUnder)) {
+    total.push({ label: 'Total', line: postedText(entry.overUnder), price: '' });
+  }
+
+  if (!spread.length && !moneyline.length && !total.length) return null;
+  return {
+    provider: postedText(entry.provider?.displayName || entry.provider?.name),
+    spread,
+    moneyline,
+    total,
+  };
+}
+
 function broadcastNames(competition) {
   const names = [];
   for (const broadcast of competition.broadcasts || []) {
@@ -260,6 +316,10 @@ export function normalizeEvents(league, data) {
       state: competition.status?.type?.state || event.status?.type?.state || 'pre',
       homeScore: scoreText(homeSide.score),
       awayScore: scoreText(awaySide.score),
+      odds: readEspnOdds(competition, {
+        homeAbbr: home.abbreviation || home.displayName || 'Home',
+        awayAbbr: away.abbreviation || away.displayName || 'Away',
+      }),
       headline,
       seasonLabel: seasonLabel(event.season?.slug),
       url: link?.href || '',

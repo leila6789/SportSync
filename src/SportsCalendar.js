@@ -20,7 +20,6 @@ import {
   singleEventFilename,
 } from './CalendarExport';
 import { isGoogleSyncConfigured, signInAndAddEvents } from './GoogleCalendarSync';
-import { fetchGameOdds } from './odds';
 import {
   LEAGUES,
   collapseConferenceDuplicates,
@@ -647,36 +646,50 @@ function ListView({ events, pending, leagueIds, teamKeys, onOpen, onClearTeams, 
   );
 }
 
+function formatQuote(side) {
+  return [side.team, side.line, side.price].filter(Boolean).join(' ');
+}
+
 function GameOdds({ event }) {
-  const [state, setState] = useState({ loading: true, quotes: [], message: '' });
-
-  useEffect(() => {
-    let cancel = false;
-    setState({ loading: true, quotes: [], message: '' });
-    fetchGameOdds(event).then((result) => {
-      if (cancel) return;
-      setState({ loading: false, quotes: result.quotes, message: result.message });
-    });
-    return () => {
-      cancel = true;
-    };
-  }, [event]);
-
+  const odds = event.odds;
+  const posted = odds && (odds.spread.length || odds.moneyline.length || odds.total.length);
   return (
-    <section className="ss-odds" aria-live="polite">
+    <section className="ss-odds">
       <h3>Odds</h3>
-      {state.loading && <p className="ss-muted">Checking Polymarket and Kalshi…</p>}
-      {!state.loading && state.quotes.map((quote) => (
-        <div key={quote.source} className="ss-odds-source">
-          <p>{quote.source}</p>
+      {!posted && <p>Odds are not posted yet.</p>}
+      {posted && (
+        <p className="ss-muted">{odds.provider ? `${odds.provider} via ESPN` : 'ESPN'}</p>
+      )}
+      {posted && odds.spread.length > 0 && (
+        <div className="ss-odds-source">
+          <p>Spread</p>
           <ul>
-            {quote.sides.map((side) => (
-              <li key={`${quote.source}-${side.label}`}>{side.label} {side.price}</li>
+            {odds.spread.map((side) => (
+              <li key={`spread-${side.team}-${side.line}`}>{formatQuote(side)}</li>
             ))}
           </ul>
         </div>
-      ))}
-      {!state.loading && !state.quotes.length && <p>{state.message}</p>}
+      )}
+      {posted && odds.moneyline.length > 0 && (
+        <div className="ss-odds-source">
+          <p>Moneyline</p>
+          <ul>
+            {odds.moneyline.map((side) => (
+              <li key={`ml-${side.team}`}>{side.team} {side.price}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {posted && odds.total.length > 0 && (
+        <div className="ss-odds-source">
+          <p>Total</p>
+          <ul>
+            {odds.total.map((side) => (
+              <li key={`total-${side.label}`}>{[side.label, side.line, side.price].filter(Boolean).join(' ')}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }
@@ -701,11 +714,18 @@ function EventDialog({ event, onClose, onDownload }) {
         <h2 id="ss-event-title">{event.fullTitle}</h2>
         <p>{formatWhen(event)}</p>
         {event.venue && <p>{event.venue}</p>}
-        {hasScore(event) && (
-          <p className="ss-score">
-            <span>{event.awayAbbr || event.awayTeam} {event.awayScore}</span>
-            <span>{event.homeAbbr || event.homeTeam} {event.homeScore}</span>
-          </p>
+        {(event.state === 'in' || event.state === 'post') && (
+          <>
+            <p className="ss-status">{event.status || (event.state === 'post' ? 'Final' : 'In progress')}</p>
+            {hasScore(event) ? (
+              <p className="ss-score">
+                <span>{event.awayAbbr || event.awayTeam} {event.awayScore}</span>
+                <span>{event.homeAbbr || event.homeTeam} {event.homeScore}</span>
+              </p>
+            ) : (
+              <p>Score is not posted yet.</p>
+            )}
+          </>
         )}
         {event.state !== 'in' && event.state !== 'post' && <GameOdds event={event} />}
         <p className="ss-muted">

@@ -7,7 +7,7 @@ function jsonResponse(data) {
   return { ok: true, status: 200, json: async () => data };
 }
 
-function competition(home, away) {
+function competition(home, away, extra = {}) {
   return {
     timeValid: true,
     venue: { fullName: 'Test Arena', address: { city: 'Atlanta', state: 'GA' } },
@@ -18,6 +18,7 @@ function competition(home, away) {
       { homeAway: 'home', team: home },
       { homeAway: 'away', team: away },
     ],
+    ...extra,
   };
 }
 
@@ -64,7 +65,7 @@ beforeEach(() => {
           ] }] }],
         });
       }
-      if (href.includes('basketball/nba')) {
+      if (href.includes('/nba/')) {
         return jsonResponse({
           sports: [{ leagues: [{ teams: [
             { team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
@@ -129,6 +130,39 @@ beforeEach(() => {
           competitions: [competition(
             { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' },
             { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+            {
+              odds: [{
+                provider: { displayName: 'DraftKings' },
+                pointSpread: {
+                  away: { close: { line: '+3.5', odds: '-110' } },
+                  home: { close: { line: '-3.5', odds: '-110' } },
+                },
+                moneyline: {
+                  away: { close: { odds: '+150' } },
+                  home: { close: { odds: '-170' } },
+                },
+                total: {
+                  over: { close: { line: 'o220.5', odds: '-110' } },
+                  under: { close: { line: 'u220.5', odds: '-110' } },
+                },
+              }],
+            },
+          )],
+        }, {
+          id: 'nba2',
+          date: '2026-10-02T23:00:00.000Z',
+          name: 'Los Angeles Lakers at Boston Celtics',
+          season: { slug: 'preseason' },
+          competitions: [competition(
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+            { id: '13', displayName: 'Los Angeles Lakers', abbreviation: 'LAL' },
+            {
+              status: { type: { state: 'post', description: 'Final' } },
+              competitors: [
+                { homeAway: 'home', score: '110', team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
+                { homeAway: 'away', score: '101', team: { id: '13', displayName: 'Los Angeles Lakers', abbreviation: 'LAL' } },
+              ],
+            },
           )],
         }],
       });
@@ -175,6 +209,30 @@ test('starts empty until a team is picked, then exports that team', async () => 
 
   await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
   expect(window.URL.createObjectURL).toHaveBeenCalled();
+});
+
+test('shows ESPN odds on an upcoming game and the score when it is final', async () => {
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: 'List' }));
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Boston');
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Boston Celtics' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Boston Celtics at Cleveland Cavaliers' }));
+  expect(await screen.findByText('Spread')).toBeInTheDocument();
+  expect(screen.getByText('BOS +3.5 -110')).toBeInTheDocument();
+  expect(screen.getByText('CLE -3.5 -110')).toBeInTheDocument();
+  expect(screen.getByText('Moneyline')).toBeInTheDocument();
+  expect(screen.getByText('BOS +150')).toBeInTheDocument();
+  expect(screen.getByText('CLE -170')).toBeInTheDocument();
+  expect(screen.getByText('Total')).toBeInTheDocument();
+  expect(screen.getByText('Over 220.5 -110')).toBeInTheDocument();
+  expect(screen.getByText('Under 220.5 -110')).toBeInTheDocument();
+  expect(screen.getByText('DraftKings via ESPN')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Los Angeles Lakers at Boston Celtics' }));
+  expect(screen.getByText('LAL 101')).toBeInTheDocument();
+  expect(screen.getByText('BOS 110')).toBeInTheDocument();
+  expect(screen.getAllByText('Final').length).toBeGreaterThan(0);
+  expect(screen.queryByText('Odds are not posted yet.')).not.toBeInTheDocument();
 });
 
 test('restores a saved team and still filters by league', async () => {

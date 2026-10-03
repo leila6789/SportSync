@@ -507,6 +507,11 @@
   font-family: Fraunces, Georgia, serif;
 }
 
+.ss-status {
+  margin: 8px 0 0;
+  font-weight: 750;
+}
+
 .ss-score {
   display: flex;
   gap: 16px;
