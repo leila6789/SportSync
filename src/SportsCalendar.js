@@ -20,6 +20,7 @@ import {
   singleEventFilename,
 } from './CalendarExport';
 import { isGoogleSyncConfigured, signInAndAddEvents } from './GoogleCalendarSync';
+import { fetchGameOdds } from './odds';
 import {
   LEAGUES,
   collapseConferenceDuplicates,
@@ -646,50 +647,36 @@ function ListView({ events, pending, leagueIds, teamKeys, onOpen, onClearTeams, 
   );
 }
 
-function formatQuote(side) {
-  return [side.team, side.line, side.price].filter(Boolean).join(' ');
-}
-
 function GameOdds({ event }) {
-  const odds = event.odds;
-  const posted = odds && (odds.spread.length || odds.moneyline.length || odds.total.length);
+  const [state, setState] = useState({ loading: true, quotes: [], message: '' });
+
+  useEffect(() => {
+    let cancel = false;
+    setState({ loading: true, quotes: [], message: '' });
+    fetchGameOdds(event).then((result) => {
+      if (cancel) return;
+      setState({ loading: false, quotes: result.quotes, message: result.message });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [event]);
+
   return (
-    <section className="ss-odds">
+    <section className="ss-odds" aria-live="polite">
       <h3>Odds</h3>
-      {!posted && <p>Odds are not posted yet.</p>}
-      {posted && (
-        <p className="ss-muted">{odds.provider ? `${odds.provider} via ESPN` : 'ESPN'}</p>
-      )}
-      {posted && odds.spread.length > 0 && (
-        <div className="ss-odds-source">
-          <p>Spread</p>
+      {state.loading && <p className="ss-muted">Checking Polymarket and Kalshi…</p>}
+      {!state.loading && state.quotes.map((quote) => (
+        <div key={quote.source} className="ss-odds-source">
+          <p>{quote.source}</p>
           <ul>
-            {odds.spread.map((side) => (
-              <li key={`spread-${side.team}-${side.line}`}>{formatQuote(side)}</li>
+            {quote.sides.map((side) => (
+              <li key={`${quote.source}-${side.label}`}>{quote.source} {side.label} {side.price}</li>
             ))}
           </ul>
         </div>
-      )}
-      {posted && odds.moneyline.length > 0 && (
-        <div className="ss-odds-source">
-          <p>Moneyline</p>
-          <ul>
-            {odds.moneyline.map((side) => (
-              <li key={`ml-${side.team}`}>{side.team} {side.price}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {posted && odds.total.length > 0 && (
-        <div className="ss-odds-source">
-          <p>Total</p>
-          <ul>
-            {odds.total.map((side) => (
-              <li key={`total-${side.label}`}>{[side.label, side.line, side.price].filter(Boolean).join(' ')}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      ))}
+      {!state.loading && !state.quotes.length && <p>{state.message}</p>}
     </section>
   );
 }

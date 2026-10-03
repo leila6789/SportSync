@@ -29,6 +29,37 @@ beforeEach(() => {
   window.URL.revokeObjectURL = jest.fn();
   global.fetch = jest.fn(async (url) => {
     const href = String(url);
+    if (href.includes('gamma-api.polymarket.com')) {
+      if (href.includes('series_id=10345')) {
+        return jsonResponse([{
+          eventDate: '2026-10-08',
+          markets: [{
+            sportsMarketType: 'moneyline',
+            outcomes: '["Celtics", "Cavaliers"]',
+            outcomePrices: '["0.42", "0.58"]',
+            gameStartTime: '2026-10-08T23:00:00Z',
+          }, {
+            sportsMarketType: 'spreads',
+            outcomes: '["Celtics", "Cavaliers"]',
+            outcomePrices: '["0.51", "0.49"]',
+            gameStartTime: '2026-10-08T23:00:00Z',
+          }],
+        }]);
+      }
+      return jsonResponse([]);
+    }
+    if (href.includes('kalshi.com')) {
+      if (href.includes('series_ticker=KXNBAGAME')) {
+        return jsonResponse({
+          markets: [
+            { event_ticker: 'KXNBAGAME-26OCT08BOSCLE', yes_sub_title: 'Boston', last_price_dollars: '0.4100' },
+            { event_ticker: 'KXNBAGAME-26OCT08BOSCLE', yes_sub_title: 'Cleveland', last_price_dollars: '0.5900' },
+          ],
+          cursor: '',
+        });
+      }
+      return jsonResponse({ markets: [], cursor: '' });
+    }
     if (href.includes('/groups/80/teams')) {
       return jsonResponse({
         pageCount: 1,
@@ -211,28 +242,27 @@ test('starts empty until a team is picked, then exports that team', async () => 
   expect(window.URL.createObjectURL).toHaveBeenCalled();
 });
 
-test('shows ESPN odds on an upcoming game and the score when it is final', async () => {
+test('shows Polymarket and Kalshi prices, and the ESPN score when a game is final', async () => {
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: 'List' }));
   await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Boston');
   await userEvent.click(await screen.findByRole('checkbox', { name: 'Boston Celtics' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Boston Celtics at Cleveland Cavaliers' }));
-  expect(await screen.findByText('Spread')).toBeInTheDocument();
-  expect(screen.getByText('BOS +3.5 -110')).toBeInTheDocument();
-  expect(screen.getByText('CLE -3.5 -110')).toBeInTheDocument();
-  expect(screen.getByText('Moneyline')).toBeInTheDocument();
-  expect(screen.getByText('BOS +150')).toBeInTheDocument();
-  expect(screen.getByText('CLE -170')).toBeInTheDocument();
-  expect(screen.getByText('Total')).toBeInTheDocument();
-  expect(screen.getByText('Over 220.5 -110')).toBeInTheDocument();
-  expect(screen.getByText('Under 220.5 -110')).toBeInTheDocument();
-  expect(screen.getByText('DraftKings via ESPN')).toBeInTheDocument();
+  expect(await screen.findByText('Polymarket Celtics 42¢')).toBeInTheDocument();
+  expect(screen.getByText('Polymarket Cavaliers 58¢')).toBeInTheDocument();
+  expect(screen.getByText('Kalshi Boston 41¢')).toBeInTheDocument();
+  expect(screen.getByText('Kalshi Cleveland 59¢')).toBeInTheDocument();
+  expect(screen.queryByText('DraftKings via ESPN')).not.toBeInTheDocument();
+  expect(screen.queryByText('BOS +3.5 -110')).not.toBeInTheDocument();
+  expect(screen.queryByText('Spread')).not.toBeInTheDocument();
+  expect(screen.queryByText(/51¢/)).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   await userEvent.click(screen.getByRole('button', { name: 'Los Angeles Lakers at Boston Celtics' }));
   expect(screen.getByText('LAL 101')).toBeInTheDocument();
   expect(screen.getByText('BOS 110')).toBeInTheDocument();
   expect(screen.getAllByText('Final').length).toBeGreaterThan(0);
-  expect(screen.queryByText('Odds are not posted yet.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Polymarket')).not.toBeInTheDocument();
+  expect(screen.queryByText('Kalshi')).not.toBeInTheDocument();
 });
 
 test('restores a saved team and still filters by league', async () => {

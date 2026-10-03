@@ -65,7 +65,7 @@ Do not commit `.env` or `.env.local`.
 ## Notes
 
 - After a team is picked, that league's published months are loaded from the ESPN scoreboard calendar (`leagues[0].calendar`), then each of those months is requested (`dates=YYYYMM`). Navigating the month or week uses that loaded schedule. Leagues with no selected team are not requested.
-- Click a game for details. Past and in-progress games show the ESPN score and status (Final, In Progress, and similar). Upcoming games show the spread, moneyline, and total from that same ESPN scoreboard response (`competitions[0].odds`, usually attributed to the sportsbook ESPN names, such as DraftKings). If ESPN has not posted a line, the dialog says odds are not posted yet.
+- Click a game for details. Past and in-progress games show the ESPN score and status. Upcoming games show Polymarket and Kalshi prices only, each labeled with its site. ESPN spreads, moneylines, and totals are not shown. If neither site has a matching market, the dialog says odds are not posted yet.
 - College football uses that same scoreboard with an ESPN group. `groups=80` is the FBS slate (NCAAF). `groups=8` is the SEC. `groups=5` is the Big Ten. Without a group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
 - A game on both the FBS slate and a conference slate is shown once. The conference label wins when that conference is selected.
 - Team pickers read ESPN’s core team API (the public site team list does not allow browser requests). College pickers are the programs in that ESPN group.

@@ -10,7 +10,6 @@ import {
   monthsForView,
   monthsFromEspnCalendar,
   normalizeEvents,
-  readEspnOdds,
   resetScheduleCache,
   scoreboardMonthUrl,
 } from './schedule';
@@ -216,59 +215,8 @@ test('keeps final scores and reads published months from every league calendar',
       }],
     }],
   });
-  expect(finalGame).toMatchObject({ state: 'post', awayScore: '102', homeScore: '98', odds: null });
-
-  const [priced] = normalizeEvents(nba, {
-    events: [{
-      ...game('501', 'Boston Celtics at Cleveland Cavaliers'),
-      competitions: [{
-        ...game('501').competitions[0],
-        competitors: [
-          { homeAway: 'home', team: { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' } },
-          { homeAway: 'away', team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
-        ],
-        odds: [{
-          provider: { displayName: 'DraftKings' },
-          spread: -3.5,
-          overUnder: 220.5,
-          pointSpread: {
-            away: { close: { line: '+3.5', odds: '-110' } },
-            home: { close: { line: '-3.5', odds: '-110' } },
-          },
-          moneyline: {
-            away: { close: { odds: '+150' } },
-            home: { close: { odds: '-170' } },
-          },
-          total: {
-            over: { close: { line: 'o220.5', odds: '-110' } },
-            under: { close: { line: 'u220.5', odds: '-110' } },
-          },
-        }],
-      }],
-    }],
-  });
-  expect(priced.odds).toEqual({
-    provider: 'DraftKings',
-    spread: [
-      { team: 'BOS', line: '+3.5', price: '-110' },
-      { team: 'CLE', line: '-3.5', price: '-110' },
-    ],
-    moneyline: [
-      { team: 'BOS', price: '+150' },
-      { team: 'CLE', price: '-170' },
-    ],
-    total: [
-      { label: 'Over', line: '220.5', price: '-110' },
-      { label: 'Under', line: '220.5', price: '-110' },
-    ],
-  });
-  expect(readEspnOdds({ odds: [{ overUnder: 7.5 }] })).toEqual({
-    provider: '',
-    spread: [],
-    moneyline: [],
-    total: [{ label: 'Total', line: '7.5', price: '' }],
-  });
-  expect(readEspnOdds({})).toBeNull();
+  expect(finalGame).toMatchObject({ state: 'post', awayScore: '102', homeScore: '98' });
+  expect(finalGame.odds).toBeUndefined();
 
   expect(monthsFromEspnCalendar([
     '2026-10-03T07:00Z',
