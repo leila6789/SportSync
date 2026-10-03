@@ -4,6 +4,7 @@ import {
   collegeTeamIdFromRef,
   fetchLeagueMonth,
   fetchLeagueTeams,
+  collapseConferenceDuplicates,
   filterEvents,
   monthsForView,
   normalizeEvents,
@@ -12,6 +13,8 @@ import {
 } from './schedule';
 
 const ncaaf = LEAGUES.find((league) => league.id === 'ncaaf');
+const sec = LEAGUES.find((league) => league.id === 'sec');
+const bigten = LEAGUES.find((league) => league.id === 'bigten');
 const nba = LEAGUES.find((league) => league.id === 'nba');
 
 function jsonResponse(data, ok = true, status = 200) {
@@ -43,9 +46,14 @@ beforeEach(() => {
 });
 
 test('includes college football with the pro leagues', () => {
-  expect(LEAGUES.map((league) => league.id)).toEqual(['nba', 'mlb', 'nfl', 'ncaaf', 'nhl']);
+  expect(LEAGUES.map((league) => league.id)).toEqual(['nba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl']);
   expect(ncaaf.path).toBe('football/college-football');
   expect(ncaaf.fullName).toBe('College football');
+  expect(sec.name).toBe('SEC');
+  expect(sec.group).toBe('8');
+  expect(bigten.name).toBe('Big Ten');
+  expect(bigten.group).toBe('5');
+  expect(LEAGUES.map((league) => league.name)).not.toContain('Big 10');
 });
 
 test('normalizes timed games and TBD postseason slots', () => {
@@ -113,6 +121,9 @@ test('loads college football from the FBS month scoreboard', async () => {
   expect(url).toContain('dates=202610');
   expect(url).toContain('groups=80');
   expect(url).toContain('limit=400');
+  expect(scoreboardMonthUrl(sec, 2026, 10)).toContain('groups=8');
+  expect(scoreboardMonthUrl(sec, 2026, 10)).not.toContain('groups=80');
+  expect(scoreboardMonthUrl(bigten, 2026, 10)).toContain('groups=5');
   expect(scoreboardMonthUrl(nba, 2026, 10)).not.toContain('groups=');
 
   global.fetch = jest.fn(async (requested) => {
@@ -152,4 +163,41 @@ test('college team directory keeps FBS ids', async () => {
   const teams = await fetchLeagueTeams(ncaaf, new Date(2026, 9, 2));
   expect(teams.map((team) => team.name)).toEqual(['Alabama Crimson Tide']);
   expect(teams[0].key).toBe('ncaaf:333');
+});
+
+test('keeps one copy of a game that is both NCAAF and SEC', () => {
+  const slate = { events: [game('9', 'Alabama Crimson Tide at Georgia Bulldogs')] };
+  const [fbsGame] = normalizeEvents(ncaaf, slate);
+  const [secGame] = normalizeEvents(sec, slate);
+  const [bigTenGame] = normalizeEvents(bigten, { events: [game('10', 'Ohio State Buckeyes at Iowa Hawkeyes')] });
+  const collapsed = collapseConferenceDuplicates([fbsGame, secGame, bigTenGame]);
+  expect(collapsed.map((event) => event.id).sort()).toEqual(['bigten-10', 'sec-9']);
+  expect(filterEvents(collapsed, { leagueIds: ['sec'], teamKeys: ['sec:221'] })).toHaveLength(1);
+  expect(filterEvents([fbsGame, secGame], { leagueIds: ['ncaaf'], teamKeys: [] }).map((event) => event.leagueId)).toEqual(['ncaaf']);
+});
+
+test('SEC team list follows the SEC group', async () => {
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('/groups/8/teams')) {
+      return jsonResponse({
+        pageCount: 1,
+        items: [{ $ref: 'http://sports.core.api.espn.com/v2/sports/football/leagues/college-football/seasons/2026/teams/333?lang=en' }],
+      });
+    }
+    return jsonResponse({
+      sports: [{
+        leagues: [{
+          teams: [
+            { team: { id: '333', displayName: 'Alabama Crimson Tide', abbreviation: 'ALA' } },
+            { team: { id: '194', displayName: 'Ohio State Buckeyes', abbreviation: 'OSU' } },
+          ],
+        }],
+      }],
+    });
+  });
+
+  const teams = await fetchLeagueTeams(sec, new Date(2026, 9, 2));
+  expect(teams.map((team) => team.name)).toEqual(['Alabama Crimson Tide']);
+  expect(teams[0].key).toBe('sec:333');
 });

@@ -2,12 +2,11 @@ import { endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
 
 /**
  * ESPN public scoreboard, one YYYYMM month at a time.
- * College football needs groups=80 (FBS). Without it, a month query returns
- * only the current week. limit=100 truncates a full college month, so every
- * scoreboard request asks for 400.
+ * College football needs a group: 80 is FBS, 8 is the SEC, and 5 is the Big Ten.
+ * Without a group, a month query returns only the current week. limit=100
+ * truncates a full college month, so every scoreboard request asks for 400.
  */
 const MONTH_LIMIT = 400;
-const FBS_GROUP = '80';
 
 export const LEAGUES = [
   {
@@ -39,7 +38,26 @@ export const LEAGUES = [
     name: 'NCAAF',
     fullName: 'College football',
     path: 'football/college-football',
+    group: '80',
     color: '#9f1239',
+    durationMs: 3.5 * 60 * 60 * 1000,
+  },
+  {
+    id: 'sec',
+    name: 'SEC',
+    fullName: 'SEC',
+    path: 'football/college-football',
+    group: '8',
+    color: '#0f766e',
+    durationMs: 3.5 * 60 * 60 * 1000,
+  },
+  {
+    id: 'bigten',
+    name: 'Big Ten',
+    fullName: 'Big Ten',
+    path: 'football/college-football',
+    group: '5',
+    color: '#9a3412',
     durationMs: 3.5 * 60 * 60 * 1000,
   },
   {
@@ -53,9 +71,11 @@ export const LEAGUES = [
 ];
 
 const monthCache = new Map();
+const jsonCache = new Map();
 
 export function resetScheduleCache() {
   monthCache.clear();
+  jsonCache.clear();
 }
 
 export function leagueById(id) {
@@ -67,21 +87,29 @@ function pad(month) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Schedule request failed (${response.status})`);
+  if (!jsonCache.has(url)) {
+    const pending = fetch(url).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Schedule request failed (${response.status})`);
+      }
+      return response.json();
+    }).catch((error) => {
+      jsonCache.delete(url);
+      throw error;
+    });
+    jsonCache.set(url, pending);
   }
-  return response.json();
+  return jsonCache.get(url);
 }
 
 export function scoreboardMonthUrl(league, year, month) {
   const ym = `${year}${pad(month)}`;
-  const group = league.id === 'ncaaf' ? `&groups=${FBS_GROUP}` : '';
+  const group = league.group ? `&groups=${league.group}` : '';
   return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${ym}&limit=${MONTH_LIMIT}${group}`;
 }
 
 export function teamsUrl(league) {
-  const limit = league.id === 'ncaaf' ? 1000 : 100;
+  const limit = league.path === 'football/college-football' ? 1000 : 100;
   return `https://site.api.espn.com/apis/site/v2/sports/${league.path}/teams?limit=${limit}`;
 }
 
@@ -97,8 +125,8 @@ export function collegeTeamIdFromRef(ref) {
   return match ? match[1] : '';
 }
 
-export function fbsTeamsUrl(seasonYear) {
-  return `https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/seasons/${seasonYear}/types/2/groups/${FBS_GROUP}/teams?limit=200`;
+export function fbsTeamsUrl(seasonYear, groupId = '80') {
+  return `https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/seasons/${seasonYear}/types/2/groups/${groupId}/teams?limit=200`;
 }
 
 function seasonLabel(slug) {
@@ -177,9 +205,11 @@ export function normalizeEvents(league, data) {
     }
 
     const link = (event.links || []).find((item) => typeof item.href === 'string' && item.href.startsWith('http'));
+    const college = league.path === 'football/college-football';
 
     return [{
       id: `${league.id}-${event.id}`,
+      sourceKey: college ? `cfb:${event.id}` : `${league.id}:${event.id}`,
       uid: `${league.id}-${event.id}@sportsync.app`,
       title,
       fullTitle,
@@ -232,6 +262,21 @@ export function filterEvents(events, { leagueIds, teamKeys }) {
 export function dedupeEvents(events) {
   const map = new Map();
   for (const event of events) map.set(event.id, event);
+  return [...map.values()];
+}
+
+/** SEC and Big Ten games also appear on the full FBS slate. Keep the conference copy. */
+const CONFERENCE_RANK = { sec: 2, bigten: 2, ncaaf: 1 };
+
+export function collapseConferenceDuplicates(events) {
+  const map = new Map();
+  for (const event of events) {
+    const key = event.sourceKey || event.id;
+    const current = map.get(key);
+    const rank = CONFERENCE_RANK[event.leagueId] || 0;
+    const currentRank = current ? (CONFERENCE_RANK[current.leagueId] || 0) : -1;
+    if (!current || rank > currentRank) map.set(key, event);
+  }
   return [...map.values()];
 }
 
@@ -291,12 +336,12 @@ export function fetchLeagueMonth(league, year, month) {
   return monthCache.get(key);
 }
 
-async function fetchFbsTeamIds(seasonYear) {
+async function fetchGroupTeamIds(seasonYear, groupId) {
   const ids = new Set();
   let page = 1;
   let pageCount = 1;
   while (page <= pageCount && page <= 5) {
-    const data = await fetchJson(`${fbsTeamsUrl(seasonYear)}&page=${page}`);
+    const data = await fetchJson(`${fbsTeamsUrl(seasonYear, groupId)}&page=${page}`);
     pageCount = data.pageCount || 1;
     for (const item of data.items || []) {
       const id = collegeTeamIdFromRef(item.$ref);
@@ -309,16 +354,18 @@ async function fetchFbsTeamIds(seasonYear) {
 }
 
 export async function fetchLeagueTeams(league, now = new Date()) {
-  if (league.id !== 'ncaaf') {
+  if (!league.group) {
     const data = await fetchJson(teamsUrl(league));
     return normalizeTeams(league, data);
   }
   const [directory, ids] = await Promise.all([
     fetchJson(teamsUrl(league)),
-    fetchFbsTeamIds(collegeSeasonYear(now)),
+    fetchGroupTeamIds(collegeSeasonYear(now), league.group),
   ]);
   const teams = normalizeTeams(league, directory).filter((team) => ids.has(team.id));
-  return teams.length ? teams : normalizeTeams(league, directory);
+  if (teams.length) return teams;
+  if (!ids.size && league.id === 'ncaaf') return normalizeTeams(league, directory);
+  return teams;
 }
 
 export function mergeTeams(teams, events) {

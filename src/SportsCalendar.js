@@ -22,6 +22,7 @@ import {
 import { isGoogleSyncConfigured, signInAndAddEvents } from './GoogleCalendarSync';
 import {
   LEAGUES,
+  collapseConferenceDuplicates,
   dedupeEvents,
   eventsInPeriod,
   fetchLeagueMonth,
@@ -41,7 +42,7 @@ const localizer = dateFnsLocalizer({
   locales: {},
 });
 
-const STORAGE_KEY = 'sportsync.filters.v1';
+const STORAGE_KEY = 'sportsync.filters.v2';
 
 function readFilters() {
   try {
@@ -119,7 +120,7 @@ export default function SportsCalendar() {
   const [leagueIds, setLeagueIds] = useState(() => saved.current?.leagueIds || LEAGUES.map((league) => league.id));
   const [teamKeys, setTeamKeys] = useState(() => saved.current?.teamKeys || []);
   const [teamSearch, setTeamSearch] = useState('');
-  const [openLeagues, setOpenLeagues] = useState(() => LEAGUES.filter((league) => league.id !== 'ncaaf').map((league) => league.id));
+  const [openLeagues, setOpenLeagues] = useState(() => LEAGUES.filter((league) => !league.group).map((league) => league.id));
   const [store, setStore] = useState({});
   const [errors, setErrors] = useState({});
   const [pending, setPending] = useState(0);
@@ -194,7 +195,7 @@ export default function SportsCalendar() {
   const period = useMemo(() => periodBounds(view, cursor), [view, cursor]);
   const allEvents = useMemo(() => dedupeEvents(Object.values(store).flat()), [store]);
   const filtered = useMemo(
-    () => filterEvents(allEvents, { leagueIds, teamKeys }),
+    () => collapseConferenceDuplicates(filterEvents(allEvents, { leagueIds, teamKeys })),
     [allEvents, leagueIds, teamKeys]
   );
   const periodEvents = useMemo(
@@ -289,7 +290,7 @@ export default function SportsCalendar() {
           </span>
           <div>
             <h1>SportSync</h1>
-            <p>NBA, MLB, NFL, college football, and NHL in one calendar.</p>
+            <p>NBA, MLB, NFL, NCAAF, SEC, Big Ten, and NHL in one calendar.</p>
           </div>
         </div>
         <div className="ss-header-actions">
@@ -398,7 +399,7 @@ export default function SportsCalendar() {
               })}
               {leagueIds.length === 0 && <p className="ss-muted">Turn a league on to filter its teams.</p>}
             </div>
-            <p className="ss-attrib">Schedules from ESPN. College football is the FBS slate.</p>
+            <p className="ss-attrib">Schedules from ESPN. NCAAF is FBS. SEC and Big Ten are those conference slates.</p>
           </div>
         </aside>
 

@@ -1,6 +1,6 @@
 # SportSync
 
-A sports calendar for NBA, MLB, NFL, college football (NCAAF), and NHL. Pick leagues and teams, browse the schedule by month, week, or list, then take the games with you.
+A sports calendar for NBA, MLB, NFL, college football (NCAAF, SEC, and Big Ten), and NHL. Pick leagues and teams, browse the schedule by month, week, or list, then take the games with you.
 
 Schedules come from ESPN’s public scoreboard. No account is required.
 
@@ -20,7 +20,7 @@ npm run build
 
 ## Use the calendar
 
-- Turn leagues on or off. **NCAAF** is college football (the FBS slate). It sits with NBA, MLB, NFL, and NHL.
+- Turn leagues on or off. **NCAAF** is the full FBS slate. **SEC** and **Big Ten** are those conferences on their own. NBA, MLB, NFL, and NHL stay alongside them.
 - Search teams and check the ones you follow. Leave every team unchecked to see the full league schedule.
 - Switch **Month**, **Week**, and **List**. Click a game for the venue, broadcast, and export actions.
 - College Saturdays are crowded in month view. Use **List**, or the “+ more” link on a day, to read every game.
@@ -65,5 +65,6 @@ Do not commit `.env` or `.env.local`.
 ## Notes
 
 - Every league loads a month at a time (`dates=YYYYMM`).
-- College football uses that same scoreboard with `groups=80`, which is the FBS slate. Without the group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
-- Team pickers for college football list FBS programs, plus any other school that appears on the loaded slate.
+- College football uses that same scoreboard with an ESPN group. `groups=80` is the FBS slate (NCAAF). `groups=8` is the SEC. `groups=5` is the Big Ten. Without a group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
+- A game on both the FBS slate and a conference slate is shown once. The conference label wins when that conference is selected.
+- Team pickers list the programs in that group, plus any other school that appears on the loaded slate.
