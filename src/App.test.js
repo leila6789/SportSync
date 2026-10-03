@@ -33,6 +33,7 @@ beforeEach(() => {
       if (href.includes('series_id=10345')) {
         return jsonResponse([{
           eventDate: '2026-10-08',
+          slug: 'nba-bos-cle-2026-10-08',
           markets: [{
             sportsMarketType: 'moneyline',
             outcomes: '["Celtics", "Cavaliers"]',
@@ -252,6 +253,12 @@ test('shows Polymarket and Kalshi prices, and the ESPN score when a game is fina
   expect(screen.getByText('Polymarket Cavaliers 58¢')).toBeInTheDocument();
   expect(screen.getByText('Kalshi Boston 41¢')).toBeInTheDocument();
   expect(screen.getByText('Kalshi Cleveland 59¢')).toBeInTheDocument();
+  const polymarketLink = screen.getByRole('link', { name: 'Polymarket Celtics 42¢' });
+  expect(polymarketLink).toHaveAttribute('href', 'https://polymarket.com/event/nba-bos-cle-2026-10-08');
+  expect(polymarketLink).toHaveAttribute('target', '_blank');
+  const kalshiLink = screen.getByRole('link', { name: 'Kalshi Boston 41¢' });
+  expect(kalshiLink).toHaveAttribute('href', 'https://kalshi.com/markets/kxnbagame/professional-basketball-game/kxnbagame-26oct08boscle');
+  expect(kalshiLink).toHaveAttribute('target', '_blank');
   expect(screen.queryByText('DraftKings via ESPN')).not.toBeInTheDocument();
   expect(screen.queryByText('BOS +3.5 -110')).not.toBeInTheDocument();
   expect(screen.queryByText('Spread')).not.toBeInTheDocument();

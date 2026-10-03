@@ -682,9 +682,16 @@ function GameOdds({ event }) {
         <div key={quote.source} className="ss-odds-source">
           <p>{quote.source}</p>
           <ul>
-            {quote.sides.map((side) => (
-              <li key={`${quote.source}-${side.label}`}>{quote.source} {side.label} {side.price}</li>
-            ))}
+            {quote.sides.map((side) => {
+              const text = `${quote.source} ${side.label} ${side.price}`;
+              return (
+                <li key={`${quote.source}-${side.label}`}>
+                  {side.url ? (
+                    <a href={side.url} target="_blank" rel="noopener noreferrer">{text}</a>
+                  ) : text}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ))}

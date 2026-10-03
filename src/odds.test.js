@@ -2,9 +2,11 @@ import {
   assignTeams,
   fetchGameOdds,
   formatPrice,
+  kalshiPageUrl,
   kalshiPrice,
   matchKalshi,
   matchPolymarket,
+  polymarketPageUrl,
   parseKalshiTicker,
   teamMatchScore,
 } from './odds';
@@ -47,6 +49,7 @@ test('matches a Polymarket moneyline and ignores a different start time', () => 
   const events = [{
     eventDate: '2026-10-03',
     startTime: '2026-10-03T23:00:00Z',
+    slug: 'nba-mia-tor-2026-10-03',
     markets: [{
       sportsMarketType: 'spreads',
       outcomes: '["Heat", "Raptors"]',
@@ -69,10 +72,17 @@ test('matches a Polymarket moneyline and ignores a different start time', () => 
     }],
   }];
   expect(matchPolymarket(events, heatAtRaptors)).toEqual([
-    { label: 'Heat', price: '50.5¢' },
-    { label: 'Raptors', price: '49.5¢' },
+    { label: 'Heat', price: '50.5¢', url: 'https://polymarket.com/event/nba-mia-tor-2026-10-03' },
+    { label: 'Raptors', price: '49.5¢', url: 'https://polymarket.com/event/nba-mia-tor-2026-10-03' },
   ]);
   expect(matchPolymarket([], heatAtRaptors)).toBeNull();
+  expect(polymarketPageUrl({ slug: 'nba-mia-tor-2026-10-03', url: 'https://www.nfl.com/scores' })).toBe(
+    'https://polymarket.com/event/nba-mia-tor-2026-10-03',
+  );
+  expect(polymarketPageUrl({ url: 'https://polymarket.com/event/given-by-api' })).toBe(
+    'https://polymarket.com/event/given-by-api',
+  );
+  expect(polymarketPageUrl({})).toBe('');
 });
 
 test('matches a Kalshi ticker to the Eastern game date', () => {
@@ -101,9 +111,24 @@ test('matches a Kalshi ticker to the Eastern game date', () => {
     },
   ];
   expect(matchKalshi(markets, heatAtRaptors)).toEqual([
-    { label: 'Miami', price: '53¢' },
-    { label: 'Toronto', price: '47¢' },
+    { label: 'Miami', price: '53¢', url: 'https://kalshi.com/markets/kxnbagame/professional-basketball-game/kxnbagame-26oct03miator' },
+    { label: 'Toronto', price: '47¢', url: 'https://kalshi.com/markets/kxnbagame/professional-basketball-game/kxnbagame-26oct03miator' },
   ]);
+  expect(kalshiPageUrl('KXMLBGAME-26OCT03CHWCLE')).toBe('');
+  expect(matchKalshi([
+    { event_ticker: 'KXMLBGAME-26OCT03CHWCLE', yes_sub_title: 'Miami', last_price_dollars: '0.5300', url: 'https://example.com/nope' },
+    { event_ticker: 'KXMLBGAME-26OCT03CHWCLE', yes_sub_title: 'Toronto', last_price_dollars: '0.4700' },
+  ], heatAtRaptors).map((side) => side.url)).toEqual(['', '']);
+  const linked = matchKalshi([
+    {
+      event_ticker: 'KXMLBGAME-26OCT03CHWCLE',
+      yes_sub_title: 'Miami',
+      last_price_dollars: '0.5300',
+      url: 'https://kalshi.com/markets/kxmlbgame/professional-baseball-game/kxmlbgame-26oct03chwcle',
+    },
+    { event_ticker: 'KXMLBGAME-26OCT03CHWCLE', yes_sub_title: 'Toronto', last_price_dollars: '0.4700' },
+  ], heatAtRaptors);
+  expect(linked[0].url).toBe('https://kalshi.com/markets/kxmlbgame/professional-baseball-game/kxmlbgame-26oct03chwcle');
 });
 
 test('says odds are not posted when neither site has a matching market', async () => {

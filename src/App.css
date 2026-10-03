@@ -542,6 +542,11 @@
   padding-left: 18px;
 }
 
+.ss-odds a {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .ss-list-loading {
   padding: 12px;
 }

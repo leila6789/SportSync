@@ -141,15 +141,65 @@ function parseTime(value) {
   return Number.isNaN(time) ? null : time;
 }
 
-function quoteFromLabels(labels, prices, game) {
+function quoteFromLabels(labels, prices, game, urls = []) {
   const indexes = assignTeams(game, labels);
   if (!indexes) return null;
   const sides = indexes.map((index) => ({
     label: String(labels[index]),
     price: prices[index],
+    url: urls[index] || '',
   }));
   if (sides.some((side) => !side.price)) return null;
   return sides;
+}
+
+function httpsUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:') return '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+function siteUrl(value, host) {
+  const href = httpsUrl(value);
+  if (!href) return '';
+  const name = new URL(href).hostname.replace(/^www\./, '');
+  return name === host ? href : '';
+}
+
+/**
+ * Polymarket's gamma payload has no page URL. The event `slug` is the public
+ * event page: https://polymarket.com/event/{slug}. An explicit polymarket.com
+ * URL on the event or market wins when one is present.
+ */
+export function polymarketPageUrl(event, market) {
+  const direct = [market?.url, event?.url].map((value) => siteUrl(value, 'polymarket.com')).find(Boolean);
+  if (direct) return direct;
+  const slug = String(event?.slug || market?.slug || '').trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(slug)) return '';
+  return `https://polymarket.com/event/${slug}`;
+}
+
+/**
+ * Kalshi's markets payload has no page URL. These category paths are the
+ * public event pages checked for that series. Other series stay unlinked.
+ */
+const KALSHI_EVENT_PATH = {
+  KXNFLGAME: 'professional-football-game',
+  KXNBAGAME: 'professional-basketball-game',
+  KXNHLGAME: 'nhl-game',
+};
+
+export function kalshiPageUrl(eventTicker) {
+  const ticker = String(eventTicker || '').trim();
+  const series = ticker.split('-')[0];
+  const path = KALSHI_EVENT_PATH[series];
+  if (!path || !/^[A-Z0-9]+(?:-[A-Z0-9]+)+$/i.test(ticker)) return '';
+  return `https://kalshi.com/markets/${series.toLowerCase()}/${path}/${ticker.toLowerCase()}`;
 }
 
 export function matchPolymarket(events, game) {
@@ -159,7 +209,8 @@ export function matchPolymarket(events, game) {
     if (!market) continue;
     const outcomes = parseJsonList(market.outcomes).map(String);
     const prices = parseJsonList(market.outcomePrices).map(formatPrice);
-    const quote = quoteFromLabels(outcomes, prices, game);
+    const page = polymarketPageUrl(event, market);
+    const quote = quoteFromLabels(outcomes, prices, game, outcomes.map(() => page));
     if (!quote) continue;
     paired.push({
       quote,
@@ -217,7 +268,9 @@ export function matchKalshi(markets, game) {
     if (parsed.minutes != null && tip != null && Math.abs(parsed.minutes - tip) > 180) continue;
     const labels = group.map((market) => market.yes_sub_title || '');
     const prices = group.map((market) => kalshiPrice(market));
-    const quote = quoteFromLabels(labels, prices, game);
+    const page = [group[0]?.url, group[1]?.url].map((value) => siteUrl(value, 'kalshi.com')).find(Boolean)
+      || kalshiPageUrl(ticker);
+    const quote = quoteFromLabels(labels, prices, game, labels.map(() => page));
     if (!quote) continue;
     hits.push({ quote, minutes: parsed.minutes });
   }
