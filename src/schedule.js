@@ -23,6 +23,14 @@ export const LEAGUES = [
     durationMs: 2.5 * 60 * 60 * 1000,
   },
   {
+    id: 'wnba',
+    name: 'WNBA',
+    fullName: 'WNBA',
+    path: 'basketball/wnba',
+    color: '#be185d',
+    durationMs: 2.5 * 60 * 60 * 1000,
+  },
+  {
     id: 'mlb',
     name: 'MLB',
     fullName: 'MLB',

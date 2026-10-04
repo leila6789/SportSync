@@ -208,6 +208,8 @@ test('starts empty until a team is picked, then exports that team', async () => 
   expect(screen.getByRole('heading', { name: 'SportSync' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'SEC', pressed: true })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Big Ten', pressed: true })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'WNBA', pressed: true })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'NBA', pressed: true })).toBeInTheDocument();
   expect(screen.getByText('Pick a team to see its games.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Download iCal/i })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Add to Google Calendar' })).toBeDisabled();
@@ -450,4 +452,86 @@ test('shows a later published month for the selected league', async () => {
   expect(screen.getByText('BOS @ NY')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: 'Month' }));
   expect(screen.getByText('BOS @ NY')).toBeInTheDocument();
+});
+
+test('shows a selected WNBA team schedule and its market links', async () => {
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('gamma-api.polymarket.com')) {
+      if (!href.includes('series_id=10105')) return jsonResponse([]);
+      return jsonResponse([{
+        eventDate: '2026-10-04',
+        slug: 'wnba-nyl-atl-2026-10-04',
+        markets: [{
+          sportsMarketType: 'moneyline',
+          outcomes: '["New York Liberty", "Atlanta Dream"]',
+          outcomePrices: '["0.385", "0.615"]',
+          gameStartTime: '2026-10-04T18:00:00Z',
+        }],
+      }]);
+    }
+    if (href.includes('kalshi.com')) {
+      if (!href.includes('series_ticker=KXWNBAGAME')) return jsonResponse({ markets: [], cursor: '' });
+      return jsonResponse({
+        markets: [
+          { event_ticker: 'KXWNBAGAME-26OCT04ATLNY', yes_sub_title: 'New York', last_price_dollars: '0.3900' },
+          { event_ticker: 'KXWNBAGAME-26OCT04ATLNY', yes_sub_title: 'Atlanta', last_price_dollars: '0.6100' },
+        ],
+        cursor: '',
+      });
+    }
+    if (href.includes('/leagues/wnba/teams')) {
+      return jsonResponse({
+        sports: [{ leagues: [{ teams: [
+          { team: { id: '9', displayName: 'New York Liberty', abbreviation: 'NY' } },
+          { team: { id: '20', displayName: 'Atlanta Dream', abbreviation: 'ATL' } },
+        ] }] }],
+      });
+    }
+    if (href.includes('/teams')) return jsonResponse({ sports: [{ leagues: [{ teams: [] }] }] });
+    if (href.includes('basketball/wnba/scoreboard') && !href.includes('limit=1')) {
+      return jsonResponse({
+        events: [{
+          id: 'wnba1',
+          date: '2026-10-04T18:00:00.000Z',
+          name: 'New York Liberty at Atlanta Dream',
+          season: { slug: 'regular-season' },
+          competitions: [competition(
+            { id: '20', displayName: 'Atlanta Dream', abbreviation: 'ATL' },
+            { id: '9', displayName: 'New York Liberty', abbreviation: 'NY' },
+          )],
+        }],
+      });
+    }
+    if (href.includes('scoreboard')) {
+      return jsonResponse({
+        leagues: [{ calendar: ['2026-04-25T07:00Z', '2026-10-31T07:00Z'] }],
+      });
+    }
+    return jsonResponse({ events: [] });
+  });
+
+  render(<App />);
+  expect(screen.getByRole('button', { name: 'WNBA', pressed: true })).toBeInTheDocument();
+  expect(screen.getByText('Pick a team to see its games.')).toBeInTheDocument();
+  expect(global.fetch.mock.calls.some(([url]) => String(url).includes('scoreboard'))).toBe(false);
+
+  await userEvent.click(screen.getByRole('button', { name: 'List' }));
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Liberty');
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'New York Liberty' }));
+  expect(await screen.findByText('New York Liberty at Atlanta Dream')).toBeInTheDocument();
+  expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
+  expect(global.fetch.mock.calls.some(([url]) => String(url).includes('basketball/wnba/scoreboard'))).toBe(true);
+
+  await userEvent.click(screen.getByRole('button', { name: 'New York Liberty at Atlanta Dream' }));
+  const polymarket = await screen.findByRole('link', { name: 'Polymarket New York Liberty 38.5¢' });
+  expect(polymarket).toHaveAttribute('href', 'https://polymarket.com/event/wnba-nyl-atl-2026-10-04');
+  expect(polymarket).toHaveAttribute('target', '_blank');
+  const kalshi = screen.getByRole('link', { name: 'Kalshi New York 39¢' });
+  expect(kalshi).toHaveAttribute('href', 'https://kalshi.com/markets/kxwnbagame/womens-pro-basketball-game/kxwnbagame-26oct04atlny');
+  expect(kalshi).toHaveAttribute('target', '_blank');
+
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
+  expect(window.URL.createObjectURL).toHaveBeenCalled();
 });

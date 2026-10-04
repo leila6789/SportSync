@@ -1,6 +1,6 @@
 # SportSync
 
-A sports calendar for NBA, MLB, NFL, college football (NCAAF, SEC, and Big Ten), and NHL. Pick leagues and teams, browse the schedule by month, week, or list, then take the games with you.
+A sports calendar for NBA, WNBA, MLB, NFL, college football (NCAAF, SEC, and Big Ten), and NHL. Pick leagues and teams, browse the schedule by month, week, or list, then take the games with you.
 
 Schedules come from ESPN’s public scoreboard. No account is required.
 
@@ -20,7 +20,7 @@ npm run build
 
 ## Use the calendar
 
-- Turn leagues on or off. **NCAAF** is the full FBS slate. **SEC** and **Big Ten** are those conferences on their own. NBA, MLB, NFL, and NHL stay alongside them.
+- Turn leagues on or off. **NCAAF** is the full FBS slate. **SEC** and **Big Ten** are those conferences on their own. NBA, WNBA, MLB, NFL, and NHL stay alongside them.
 - Search teams and check the ones you follow. The calendar stays empty until at least one team is checked. A team you already picked in this browser is restored on the next visit.
 - Switch **Month**, **Week**, and **List**. Click a game for the venue, broadcast, and export actions.
 - College Saturdays are crowded in month view. Use **List**, or the “+ more” link on a day, to read every game.
@@ -65,6 +65,7 @@ Do not commit `.env` or `.env.local`.
 ## Notes
 
 - After a team is picked, that league's published months are loaded from the ESPN scoreboard calendar (`leagues[0].calendar`), then each of those months is requested (`dates=YYYYMM`). Navigating the month or week uses that loaded schedule. Leagues with no selected team are not requested.
+- WNBA uses `basketball/wnba` on that same scoreboard. The published calendar runs from April 25, 2026 through October 31, 2026. Month requests return games from April 25, 2026 through a last start of November 1, 2026 at 00:00 UTC. The 2027 calendar is empty.
 - Click a game for details. Past and in-progress games show the ESPN score and status. Upcoming games show Polymarket and Kalshi prices only, each labeled with its site. ESPN spreads, moneylines, and totals are not shown. If neither site has a matching market, the dialog says odds are not posted yet.
 - College football uses that same scoreboard with an ESPN group. `groups=80` is the FBS slate (NCAAF). `groups=8` is the SEC. `groups=5` is the Big Ten. Without a group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
 - A game on both the FBS slate and a conference slate is shown once. The conference label wins when that conference is selected.

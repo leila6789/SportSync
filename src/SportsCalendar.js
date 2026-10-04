@@ -330,7 +330,7 @@ export default function SportsCalendar() {
           </span>
           <div>
             <h1>SportSync</h1>
-            <p>NBA, MLB, NFL, NCAAF, SEC, Big Ten, and NHL in one calendar.</p>
+            <p>NBA, WNBA, MLB, NFL, NCAAF, SEC, Big Ten, and NHL in one calendar.</p>
           </div>
         </div>
         <div className="ss-header-actions">

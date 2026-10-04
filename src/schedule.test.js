@@ -49,7 +49,10 @@ beforeEach(() => {
 });
 
 test('includes college football with the pro leagues', () => {
-  expect(LEAGUES.map((league) => league.id)).toEqual(['nba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl']);
+  expect(LEAGUES.map((league) => league.id)).toEqual(['nba', 'wnba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl']);
+  expect(LEAGUES.find((league) => league.id === 'wnba').name).toBe('WNBA');
+  expect(scoreboardMonthUrl(LEAGUES.find((league) => league.id === 'wnba'), 2026, 5))
+    .toBe('https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard?dates=202605&limit=400');
   expect(ncaaf.path).toBe('football/college-football');
   expect(ncaaf.fullName).toBe('College football');
   expect(sec.name).toBe('SEC');

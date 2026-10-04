@@ -17,6 +17,7 @@
 
 export const POLYMARKET_SERIES = {
   nba: '10345',
+  wnba: '10105',
   nfl: '12185',
   mlb: '3',
   nhl: '10346',
@@ -27,6 +28,7 @@ export const POLYMARKET_SERIES = {
 
 export const KALSHI_SERIES = {
   nba: 'KXNBAGAME',
+  wnba: 'KXWNBAGAME',
   nfl: 'KXNFLGAME',
   mlb: 'KXMLBGAME',
   nhl: 'KXNHLGAME',
@@ -191,6 +193,7 @@ export function polymarketPageUrl(event, market) {
 const KALSHI_EVENT_PATH = {
   KXNFLGAME: 'professional-football-game',
   KXNBAGAME: 'professional-basketball-game',
+  KXWNBAGAME: 'womens-pro-basketball-game',
   KXNHLGAME: 'nhl-game',
 };
 
