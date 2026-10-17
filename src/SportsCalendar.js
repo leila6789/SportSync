@@ -159,6 +159,61 @@ function CalendarEvent({ event }) {
   );
 }
 
+function leagueMenuNeedsSearch(league, count) {
+  return league.id === 'ncaaf' || count >= 16;
+}
+
+function LeagueMenu({ league, teams, teamKeys, loading, maxHeight, onToggle }) {
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const visible = teams.filter((team) => (
+    !needle
+    || team.name.toLowerCase().includes(needle)
+    || team.abbreviation.toLowerCase().includes(needle)
+  ));
+  const showSearch = leagueMenuNeedsSearch(league, teams.length);
+  return (
+    <div
+      className="ss-league-menu"
+      id="ss-league-menu"
+      role="region"
+      aria-label={`${league.fullName} teams`}
+      style={maxHeight ? { maxHeight } : undefined}
+    >
+      {showSearch && (
+        <input
+          type="search"
+          className="ss-search"
+          placeholder={`Search ${league.name}`}
+          aria-label={`Search ${league.name} teams`}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      )}
+      <div className="ss-league-menu-list">
+        {loading && teams.length === 0 && <p className="ss-menu-note">Loading teams…</p>}
+        {!loading && visible.length === 0 && (
+          <p className="ss-menu-note">{needle ? 'No teams match.' : 'No teams loaded.'}</p>
+        )}
+        {visible.map((team) => {
+          const on = teamKeys.includes(team.key);
+          return (
+            <label key={team.key} className={`ss-league-row${on ? ' is-on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => onToggle(team.key)}
+              />
+              <Logo src={team.logo} className="ss-menu-logo" />
+              <span className="ss-league-row-name">{team.name}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Logo({ src, className = 'ss-logo' }) {
   const theme = useContext(ThemeContext);
   const [attempt, setAttempt] = useState(0);
@@ -267,6 +322,9 @@ export default function SportsCalendar() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(() => !saved.current);
+  const [menuLeagueId, setMenuLeagueId] = useState(null);
+  const [menuMaxHeight, setMenuMaxHeight] = useState(null);
+  const leagueBarRef = useRef(null);
   const [themeChoice, setThemeChoice] = useState(readThemeChoice);
   const [systemDark, setSystemDark] = useState(systemIsDark);
   const cacheRef = useRef(new Map());
@@ -464,6 +522,40 @@ export default function SportsCalendar() {
     return () => window.removeEventListener('keydown', onKey);
   }, [pickerOpen, closePicker]);
 
+  useEffect(() => {
+    if (!menuLeagueId) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') setMenuLeagueId(null);
+    };
+    const onPointer = (event) => {
+      if (!leagueBarRef.current?.contains(event.target)) setMenuLeagueId(null);
+    };
+    document.addEventListener('mousedown', onPointer);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuLeagueId]);
+
+  useLayoutEffect(() => {
+    if (!menuLeagueId) return undefined;
+    const place = () => {
+      const node = leagueBarRef.current;
+      if (!node) return;
+      const bottom = node.getBoundingClientRect().bottom;
+      const reserve = window.innerWidth <= 800 ? 112 : 24;
+      setMenuMaxHeight(Math.max(160, Math.floor(window.innerHeight - bottom - reserve)));
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [menuLeagueId]);
+
   const periodView = view === 'home' ? 'month' : view;
   const period = useMemo(() => periodBounds(periodView, cursor), [periodView, cursor]);
   const allEvents = useMemo(() => dedupeEvents(Object.values(store).flat()), [store]);
@@ -519,6 +611,11 @@ export default function SportsCalendar() {
     return { totals, followed };
   }, [teams, teamKeys]);
 
+  const menuLeague = leagueById(menuLeagueId);
+  const menuTeams = menuLeague
+    ? directory.filter((team) => team.leagueId === menuLeague.id)
+    : [];
+
   const visibleMonthKeys = monthsForView(view === 'home' ? 'month' : view, cursor).flatMap((ym) => (
     activeLeagues.map((league) => `${league.id}:${ym.year}-${ym.month}`)
   ));
@@ -541,10 +638,8 @@ export default function SportsCalendar() {
     setCursor((current) => (view === 'week' ? addWeeks(current, direction) : addMonths(current, direction)));
   }
 
-  function toggleLeague(id) {
-    setLeagueIds((current) => (
-      current.includes(id) ? current.filter((leagueId) => leagueId !== id) : [...current, id]
-    ));
+  function chooseLeague(id) {
+    setMenuLeagueId((current) => (current === id ? null : id));
   }
 
   function toggleTeam(key) {
@@ -592,6 +687,7 @@ export default function SportsCalendar() {
     <ThemeContext.Provider value={theme}>
       <div className={`ss-app${pickerOpen ? ' is-picking' : ''}`}>
         <header className="ss-header">
+          <div className="ss-header-row">
           <div className="ss-brand">
             <span className="ss-mark" aria-hidden="true">
               <svg viewBox="0 0 32 32" width="32" height="32">
@@ -640,37 +736,51 @@ export default function SportsCalendar() {
               )}
             </div>
           </div>
+          </div>
+          <nav className="ss-league-anchor" aria-label="Leagues" ref={leagueBarRef}>
+            <div className="ss-leagues">
+              {LEAGUES.map((league) => {
+                const on = leagueIds.includes(league.id);
+                const open = menuLeagueId === league.id;
+                const followed = leagueRoster.followed[league.id];
+                const total = leagueRoster.totals[league.id];
+                return (
+                  <button
+                    key={league.id}
+                    type="button"
+                    className={`ss-league${open ? ' is-open' : ''}${followed > 0 ? ' has-teams' : ''}`}
+                    style={{ '--league': league.color }}
+                    aria-pressed={on}
+                    aria-expanded={open}
+                    aria-controls={open ? 'ss-league-menu' : undefined}
+                    aria-haspopup="true"
+                    aria-label={league.fullName === league.name ? league.name : `${league.name} ${league.fullName}`}
+                    title={leagueCountTitle(followed, total, teamsLoading)}
+                    onClick={() => chooseLeague(league.id)}
+                  >
+                    <span className="ss-dot" style={{ background: league.color }} aria-hidden="true" />
+                    <span>{league.name}</span>
+                    <span className="ss-league-count" aria-hidden="true">{leagueCountLabel(followed, total, teamsLoading)}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {menuLeague && (
+              <LeagueMenu
+                key={menuLeague.id}
+                league={menuLeague}
+                teams={menuTeams}
+                teamKeys={teamKeys}
+                loading={teamsLoading}
+                maxHeight={menuMaxHeight}
+                onToggle={pickTeam}
+              />
+            )}
+          </nav>
         </header>
 
         <div className="ss-body">
           <aside className={`ss-sidebar${filtersOpen ? ' is-open' : ''}`}>
-            <div className="ss-side-block">
-              <h2>Leagues</h2>
-              <div className="ss-leagues">
-                {LEAGUES.map((league) => {
-                  const on = leagueIds.includes(league.id);
-                  const followed = leagueRoster.followed[league.id];
-                  const total = leagueRoster.totals[league.id];
-                  return (
-                    <button
-                      key={league.id}
-                      type="button"
-                      className={`ss-league${on ? ' is-on' : ''}`}
-                      style={{ '--league': league.color }}
-                      aria-pressed={on}
-                      aria-label={league.fullName === league.name ? league.name : `${league.name} ${league.fullName}`}
-                      title={leagueCountTitle(followed, total, teamsLoading)}
-                      onClick={() => toggleLeague(league.id)}
-                    >
-                      <span className="ss-dot" style={{ background: league.color }} aria-hidden="true" />
-                      <span>{league.name}</span>
-                      <span className="ss-league-count" aria-hidden="true">{leagueCountLabel(followed, total, teamsLoading)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             <div className="ss-side-block ss-teams-block">
               <div className="ss-teams-head">
                 <h2>Teams</h2>

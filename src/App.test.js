@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { resetGameOddsCache } from './odds';
@@ -241,6 +241,98 @@ test('league badges show teams available, then how many of them are followed', a
   expect(screen.getByRole('button', { name: 'NBA', pressed: true })).toHaveAttribute('title', '1 of 2 teams followed');
 });
 
+test('navbar league menu follows and unfollows a team after the first visit', async () => {
+  localStorage.setItem('sportsync.filters.v2', JSON.stringify({
+    leagueIds: ['nba', 'wnba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl'],
+    teamKeys: [],
+  }));
+  render(<App />);
+  expect(screen.queryByRole('heading', { name: 'Choose your teams' })).not.toBeInTheDocument();
+  const nbaButton = screen.getByRole('button', { name: 'NBA', pressed: true });
+  await waitFor(() => {
+    expect(nbaButton.querySelector('.ss-league-count')).toHaveTextContent(/^2$/);
+  });
+
+  await userEvent.click(screen.getByRole('button', { name: 'Switch to dark mode' }));
+  expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+
+  await userEvent.click(nbaButton);
+  const menu = await screen.findByRole('region', { name: 'NBA teams' });
+  expect(within(menu).queryByRole('searchbox')).not.toBeInTheDocument();
+  const celtics = within(menu).getByRole('checkbox', { name: 'Boston Celtics' });
+  expect(celtics).not.toBeChecked();
+  expect(within(menu).getByRole('checkbox', { name: 'Los Angeles Lakers' })).toBeInTheDocument();
+  expect(celtics.closest('label').querySelector('img')).toHaveAttribute('src', expect.stringContaining('bos.png'));
+
+  await userEvent.click(celtics);
+  expect(celtics).toBeChecked();
+  expect(nbaButton.querySelector('.ss-league-count')).toHaveTextContent('1/2');
+  await userEvent.click(screen.getByRole('button', { name: 'List' }));
+  expect(await screen.findByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
+  await waitFor(() => {
+    expect(JSON.parse(localStorage.getItem('sportsync.filters.v2')).teamKeys).toContain('nba:2');
+  });
+
+  await userEvent.click(screen.getByRole('button', { name: /NCAAF/ }));
+  const college = await screen.findByRole('region', { name: 'College football teams' });
+  expect(screen.queryByRole('region', { name: 'NBA teams' })).not.toBeInTheDocument();
+  expect(within(college).queryByRole('checkbox', { name: 'Boston Celtics' })).not.toBeInTheDocument();
+  const search = within(college).getByRole('searchbox', { name: 'Search NCAAF teams' });
+  await userEvent.type(search, 'Georgia');
+  expect(within(college).getByRole('checkbox', { name: 'Georgia Bulldogs' })).toBeInTheDocument();
+  expect(within(college).queryByRole('checkbox', { name: 'Alabama Crimson Tide' })).not.toBeInTheDocument();
+  await userEvent.clear(search);
+  expect(within(college).getByRole('checkbox', { name: 'Alabama Crimson Tide' })).toBeInTheDocument();
+
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('region', { name: 'College football teams' })).not.toBeInTheDocument();
+
+  await userEvent.click(nbaButton);
+  expect(await screen.findByRole('region', { name: 'NBA teams' })).toBeInTheDocument();
+  await userEvent.click(nbaButton);
+  expect(screen.queryByRole('region', { name: 'NBA teams' })).not.toBeInTheDocument();
+
+  await userEvent.click(nbaButton);
+  expect(await screen.findByRole('region', { name: 'NBA teams' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('heading', { name: 'SportSync' }));
+  expect(screen.queryByRole('region', { name: 'NBA teams' })).not.toBeInTheDocument();
+
+  await userEvent.click(nbaButton);
+  const reopen = await screen.findByRole('region', { name: 'NBA teams' });
+  await userEvent.click(within(reopen).getByRole('checkbox', { name: 'Boston Celtics' }));
+  await waitFor(() => {
+    expect(screen.queryByText('Boston Celtics at Cleveland Cavaliers')).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('sportsync.filters.v2')).teamKeys).not.toContain('nba:2');
+  });
+  expect(nbaButton.querySelector('.ss-league-count')).toHaveTextContent(/^2$/);
+  document.documentElement.removeAttribute('data-theme');
+});
+
+test('navbar league menu hides inactive teams', async () => {
+  localStorage.setItem('sportsync.filters.v2', JSON.stringify({
+    leagueIds: ['nba', 'wnba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl'],
+    teamKeys: [],
+  }));
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('/leagues/wnba/teams')) {
+      return jsonResponse({
+        sports: [{ leagues: [{ teams: [
+          { team: { id: '20', displayName: 'Atlanta Dream', abbreviation: 'ATL', isActive: true } },
+          { isActive: false, team: { id: '17475', displayName: 'Japan', abbreviation: 'JPN', isActive: false } },
+        ] }] }],
+      });
+    }
+    if (href.includes('/teams')) return jsonResponse({ sports: [{ leagues: [{ teams: [] }] }] });
+    return jsonResponse({ events: [] });
+  });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: 'WNBA', pressed: true }));
+  const menu = await screen.findByRole('region', { name: 'WNBA teams' });
+  expect(await within(menu).findByRole('checkbox', { name: 'Atlanta Dream' })).toBeInTheDocument();
+  expect(within(menu).queryByRole('checkbox', { name: /Japan/i })).not.toBeInTheDocument();
+});
+
 test('starts empty until a team is picked, then exports that team', async () => {
   render(<App />);
   expect(screen.getByRole('heading', { name: 'SportSync' })).toBeInTheDocument();
@@ -318,7 +410,7 @@ test('shows Polymarket and Kalshi prices, and the ESPN score when a game is fina
   expect(screen.queryByText('Kalshi')).not.toBeInTheDocument();
 });
 
-test('restores a saved team and still filters by league', async () => {
+test('restores a saved team and drops its games from the league menu', async () => {
   localStorage.setItem('sportsync.filters.v2', JSON.stringify({
     leagueIds: ['nba', 'mlb', 'nfl', 'ncaaf', 'sec', 'bigten', 'nhl'],
     teamKeys: ['ncaaf:333', 'nba:2'],
@@ -328,6 +420,9 @@ test('restores a saved team and still filters by league', async () => {
   expect(await screen.findByText('Alabama Crimson Tide at Georgia Bulldogs')).toBeInTheDocument();
   expect(screen.getByText('Boston Celtics at Cleveland Cavaliers')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: /NCAAF/ }));
+  const menu = await screen.findByRole('region', { name: 'College football teams' });
+  expect(screen.getByText('Alabama Crimson Tide at Georgia Bulldogs')).toBeInTheDocument();
+  await userEvent.click(within(menu).getByRole('checkbox', { name: 'Alabama Crimson Tide' }));
   await waitFor(() => {
     expect(screen.queryByText('Alabama Crimson Tide at Georgia Bulldogs')).not.toBeInTheDocument();
   });
@@ -348,6 +443,8 @@ test('filters SEC and Big Ten to the selected teams', async () => {
   expect(await screen.findByText('Ohio State Buckeyes at Iowa Hawkeyes')).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole('button', { name: 'Big Ten', pressed: true }));
+  const bigTenMenu = await screen.findByRole('region', { name: 'Big Ten teams' });
+  await userEvent.click(within(bigTenMenu).getByRole('checkbox', { name: 'Ohio State Buckeyes' }));
   await waitFor(() => {
     expect(screen.queryByText('Ohio State Buckeyes at Iowa Hawkeyes')).not.toBeInTheDocument();
   });
