@@ -4,6 +4,8 @@ import {
   collegeTeamIdFromRef,
   fetchLeagueMonth,
   fetchLeagueTeams,
+  refreshLeagueMonth,
+  teamSnapshot,
   collapseConferenceDuplicates,
   fetchPublishedMonths,
   filterEvents,
@@ -167,6 +169,8 @@ test('loads pro teams from core team records', async () => {
     leagueId: 'nba',
     name: 'Miami Heat',
     abbreviation: 'MIA',
+    logo: 'https://a.espncdn.com/i/teamlogos/nba/500/mia.png',
+    color: '#ea580c',
   }]);
   expect(global.fetch.mock.calls.some(([url]) => String(url).includes('site.api.espn.com'))).toBe(false);
 });
@@ -292,4 +296,74 @@ test('SEC team list follows the SEC group', async () => {
   const teams = await fetchLeagueTeams(sec, new Date(2026, 9, 2));
   expect(teams.map((team) => team.name)).toEqual(['Alabama Crimson Tide']);
   expect(teams[0].key).toBe('sec:333');
+});
+
+test('keeps ESPN colors and rewrites scoreboard logos to the full mark', () => {
+  const [event] = normalizeEvents(nba, {
+    events: [{
+      ...game('700', 'Boston Celtics at Cleveland Cavaliers'),
+      competitions: [{
+        ...game('700').competitions[0],
+        competitors: [
+          {
+            homeAway: 'home',
+            team: {
+              id: '5',
+              displayName: 'Cleveland Cavaliers',
+              abbreviation: 'CLE',
+              color: '860038',
+              logo: 'https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png',
+            },
+          },
+          {
+            homeAway: 'away',
+            team: {
+              id: '2',
+              displayName: 'Boston Celtics',
+              abbreviation: 'BOS',
+              color: '008348',
+              logo: 'https://a.espncdn.com/i/teamlogos/nba/500/bos.png',
+            },
+          },
+        ],
+      }],
+    }],
+  });
+  expect(event.homeColor).toBe('#860038');
+  expect(event.awayColor).toBe('#008348');
+  expect(event.homeLogo).toBe('https://a.espncdn.com/i/teamlogos/nba/500/cle.png');
+  expect(event.awayLogo).toBe('https://a.espncdn.com/i/teamlogos/nba/500/bos.png');
+});
+
+test('refreshes a cached month and picks the next and last game', async () => {
+  let homeScore = '10';
+  global.fetch = jest.fn(async () => jsonResponse({
+    events: [{
+      ...game('1', 'Boston Celtics at Cleveland Cavaliers'),
+      competitions: [{
+        ...game('1').competitions[0],
+        status: { type: { state: 'in', description: 'In Progress' } },
+        competitors: [
+          { homeAway: 'home', score: homeScore, team: { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' } },
+          { homeAway: 'away', score: '12', team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' } },
+        ],
+      }],
+    }],
+  }));
+  const first = await fetchLeagueMonth(nba, 2026, 10);
+  expect(first[0].homeScore).toBe('10');
+  homeScore = '22';
+  expect((await fetchLeagueMonth(nba, 2026, 10))[0].homeScore).toBe('10');
+  expect((await refreshLeagueMonth(nba, 2026, 10))[0].homeScore).toBe('22');
+
+  const past = new Date('2026-10-02T23:00:00Z');
+  const future = new Date('2026-10-20T23:00:00Z');
+  const now = new Date('2026-10-17T12:00:00Z');
+  const events = [
+    { id: 'final', homeKey: 'nba:2', awayKey: 'nba:13', start: past, state: 'post', awayScore: '101', homeScore: '110', title: 'LAL @ BOS' },
+    { id: 'next', homeKey: 'nba:5', awayKey: 'nba:2', start: future, state: 'pre', awayScore: '', homeScore: '', title: 'BOS @ CLE' },
+  ];
+  expect(teamSnapshot('nba:2', events, now)).toMatchObject({ next: { id: 'next' }, last: { id: 'final' }, live: null });
+  const live = { id: 'live', homeKey: 'nba:5', awayKey: 'nba:2', start: now, state: 'in', awayScore: '20', homeScore: '18', title: 'BOS @ CLE' };
+  expect(teamSnapshot('nba:2', [...events, live], now).next.id).toBe('live');
 });

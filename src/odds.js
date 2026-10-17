@@ -321,6 +321,86 @@ async function fetchKalshiMarkets(series, game) {
   return markets;
 }
 
+/** A single posted cent price. Ranges and empty prices are not a win chance. */
+export function postedPercent(price) {
+  const match = String(price || '').match(/^(\d+(?:\.\d+)?)¢$/);
+  if (!match) return null;
+  const cents = Number(match[1]);
+  if (!Number.isFinite(cents) || cents <= 0 || cents >= 100) return null;
+  return cents;
+}
+
+function abbrForLabel(game, label) {
+  const away = teamMatchScore(game?.awayTeam, game?.awayAbbr, label);
+  const home = teamMatchScore(game?.homeTeam, game?.homeAbbr, label);
+  if (away && away > home) return game.awayAbbr || '';
+  if (home && home > away) return game.homeAbbr || '';
+  return '';
+}
+
+function formatPostedPercent(cents) {
+  return Number.isInteger(cents) ? String(cents) : String(cents);
+}
+
+/**
+ * Compact win chance such as "JAX 57%". Uses a Polymarket moneyline when that
+ * quote is two posted prices, otherwise Kalshi. Never averages a bid and ask.
+ */
+export function compactWinChance(quotes, game, options = {}) {
+  const preferred = options.teamKey
+    ? (options.teamKey === game?.homeKey ? game?.homeAbbr : options.teamKey === game?.awayKey ? game?.awayAbbr : '')
+    : '';
+  for (const source of ['Polymarket', 'Kalshi']) {
+    const quote = (quotes || []).find((item) => item.source === source);
+    if (!quote?.sides?.length) continue;
+    const sides = [];
+    let blocked = false;
+    for (const side of quote.sides) {
+      const percent = postedPercent(side.price);
+      const abbr = abbrForLabel(game, side.label);
+      if (percent == null || !abbr) {
+        blocked = true;
+        break;
+      }
+      sides.push({
+        abbr,
+        percent,
+        url: side.url || '',
+        text: `${abbr} ${formatPostedPercent(percent)}%`,
+      });
+    }
+    if (blocked || sides.length < 2) continue;
+    const favorite = sides.reduce((best, side) => (side.percent > best.percent ? side : best));
+    const chosen = (preferred && sides.find((side) => side.abbr === preferred)) || favorite;
+    return {
+      text: chosen.text,
+      source,
+      url: chosen.url || '',
+      abbr: chosen.abbr,
+      percent: chosen.percent,
+    };
+  }
+  return null;
+}
+
+const gameOddsCache = new Map();
+
+export function resetGameOddsCache() {
+  gameOddsCache.clear();
+}
+
+export function loadGameOdds(game) {
+  const key = game?.id || '';
+  if (!gameOddsCache.has(key)) {
+    const pending = fetchGameOdds(game).catch((error) => {
+      gameOddsCache.delete(key);
+      throw error;
+    });
+    gameOddsCache.set(key, pending);
+  }
+  return gameOddsCache.get(key);
+}
+
 export async function fetchGameOdds(game) {
   const polySeries = POLYMARKET_SERIES[game.leagueId];
   const kalshiSeries = KALSHI_SERIES[game.leagueId];

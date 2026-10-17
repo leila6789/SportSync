@@ -1,5 +1,6 @@
 import {
   assignTeams,
+  compactWinChance,
   fetchGameOdds,
   formatPrice,
   kalshiPageUrl,
@@ -146,4 +147,54 @@ test('says odds are not posted when neither site has a matching market', async (
   expect(called.some((url) => url.includes('series_id=10345'))).toBe(true);
   expect(called.some((url) => url.includes('series_ticker=KXNBAGAME'))).toBe(true);
   expect(called.some((url) => url.includes('espn'))).toBe(false);
+});
+
+const jaguars = {
+  awayTeam: 'Houston Texans',
+  awayAbbr: 'HOU',
+  homeTeam: 'Jacksonville Jaguars',
+  homeAbbr: 'JAX',
+  awayKey: 'nfl:34',
+  homeKey: 'nfl:30',
+};
+
+test('prints a posted win chance and skips ranges', () => {
+  const quotes = [
+    {
+      source: 'Polymarket',
+      sides: [
+        { label: 'Texans', price: formatPrice('0.435'), url: 'https://polymarket.com/event/nfl-hou-jax' },
+        { label: 'Jaguars', price: formatPrice('0.565'), url: 'https://polymarket.com/event/nfl-hou-jax' },
+      ],
+    },
+    {
+      source: 'Kalshi',
+      sides: [
+        { label: 'Houston', price: '40¢', url: 'https://kalshi.com/markets/kxnflgame/professional-football-game/kxnflgame-26oct18houjax' },
+        { label: 'Jacksonville', price: '60¢', url: 'https://kalshi.com/markets/kxnflgame/professional-football-game/kxnflgame-26oct18houjax' },
+      ],
+    },
+  ];
+  expect(compactWinChance(quotes, jaguars)).toMatchObject({ text: 'JAX 56.5%', source: 'Polymarket' });
+  expect(compactWinChance(quotes, jaguars, { teamKey: 'nfl:34' })).toMatchObject({ text: 'HOU 43.5%', source: 'Polymarket' });
+  expect(compactWinChance([
+    {
+      source: 'Polymarket',
+      sides: [
+        { label: 'Texans', price: '43¢–45¢' },
+        { label: 'Jaguars', price: '55¢' },
+      ],
+    },
+    quotes[1],
+  ], jaguars)).toMatchObject({ text: 'JAX 60%', source: 'Kalshi' });
+  expect(compactWinChance([
+    {
+      source: 'Kalshi',
+      sides: [
+        { label: 'Houston', price: '47¢–49¢' },
+        { label: 'Jacksonville', price: '51¢–53¢' },
+      ],
+    },
+  ], jaguars)).toBeNull();
+  expect(compactWinChance([], jaguars)).toBeNull();
 });

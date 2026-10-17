@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import {
   addMonths,
   addWeeks,
+  eachDayOfInterval,
   endOfMonth,
   endOfWeek,
   format,
   getDay,
+  isSameDay,
+  isSameMonth,
   parse,
   startOfMonth,
   startOfWeek,
@@ -20,7 +23,7 @@ import {
   singleEventFilename,
 } from './CalendarExport';
 import { isGoogleSyncConfigured, signInAndAddEvents } from './GoogleCalendarSync';
-import { fetchGameOdds } from './odds';
+import { compactWinChance, loadGameOdds } from './odds';
 import {
   LEAGUES,
   collapseConferenceDuplicates,
@@ -30,11 +33,15 @@ import {
   fetchLeagueTeams,
   fetchPublishedMonths,
   filterEvents,
+  leagueById,
   leaguesForTeams,
   mergeTeams,
   monthsForView,
   periodBounds,
+  refreshLeagueMonth,
   resetScheduleCache,
+  teamSnapshot,
+  themedLogo,
 } from './schedule';
 
 const localizer = dateFnsLocalizer({
@@ -46,6 +53,11 @@ const localizer = dateFnsLocalizer({
 });
 
 const STORAGE_KEY = 'sportsync.filters.v2';
+const THEME_KEY = 'sportsync.theme';
+export const LIVE_REFRESH_MS = 30000;
+const BUSY_DAY = 3;
+
+const ThemeContext = React.createContext('light');
 
 function readFilters() {
   try {
@@ -74,23 +86,102 @@ function writeFilters(leagueIds, teamKeys) {
   }
 }
 
+function readThemeChoice() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch {
+    // Follow the system preference when storage is unavailable.
+  }
+  return 'system';
+}
+
+function systemIsDark() {
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function withAlpha(hex, alpha) {
+  const raw = String(hex || '').replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return 'transparent';
+  const value = Math.round(Math.min(1, Math.max(0, alpha)) * 255).toString(16).padStart(2, '0');
+  return `#${raw}${value}`;
+}
+
+function isLight(hex) {
+  const raw = String(hex || '').replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return false;
+  const r = parseInt(raw.slice(0, 2), 16);
+  const g = parseInt(raw.slice(2, 4), 16);
+  const b = parseInt(raw.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 170;
+}
+
+export function chipStyle(event) {
+  const away = event.awayColor || event.color;
+  const home = event.homeColor || event.color;
+  const light = isLight(away) && isLight(home);
+  return {
+    background: `linear-gradient(100deg, ${away} 0%, ${away} 46%, ${home} 54%, ${home} 100%)`,
+    color: light ? '#1c1917' : '#ffffff',
+    textShadow: light ? 'none' : '0 1px 1px rgba(0, 0, 0, 0.35)',
+  };
+}
+
 function eventPropGetter(event) {
-  return { style: { backgroundColor: event.color } };
+  return { style: chipStyle(event) };
+}
+
+function rowStyle(event) {
+  const away = event.awayColor || event.color;
+  const home = event.homeColor || event.color;
+  return {
+    '--away': away,
+    '--home': home,
+    '--away-tint': withAlpha(away, 0.34),
+    '--home-tint': withAlpha(home, 0.34),
+  };
 }
 
 function CalendarEvent({ event }) {
   const time = event.allDay ? 'TBD' : format(event.start, 'h:mm a');
   return (
     <span className="ss-chip" title={event.fullTitle}>
+      <Logo src={event.awayLogo} className="ss-chip-logo" />
       <span className="ss-chip-time">{time}</span>
       <span className="ss-chip-name">{event.title}</span>
+      <Logo src={event.homeLogo} className="ss-chip-logo" />
     </span>
+  );
+}
+
+function Logo({ src, className = 'ss-logo' }) {
+  const theme = useContext(ThemeContext);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    setAttempt(0);
+  }, [src, theme]);
+  const darkSrc = themedLogo(src, theme);
+  const shown = attempt === 0 ? (darkSrc || src || '') : attempt === 1 && src && src !== darkSrc ? src : '';
+  if (!shown) return <span className={`ss-logo-fallback ${className}`} aria-hidden="true" />;
+  return (
+    <img
+      src={shown}
+      alt=""
+      className={className}
+      onError={() => setAttempt((current) => (current === 0 && darkSrc !== src ? 1 : 2))}
+    />
   );
 }
 
 function formatWhen(event) {
   if (event.allDay) return `${format(event.start, 'EEEE, MMMM d, yyyy')} · Time TBD`;
   return format(event.start, 'EEEE, MMMM d, yyyy · h:mm a');
+}
+
+function shortWhen(event) {
+  if (event.allDay) return `${format(event.start, 'EEE, MMM d')} · Time TBD`;
+  return format(event.start, 'EEE, MMM d · h:mm a');
 }
 
 function periodTitle(view, cursor) {
@@ -117,9 +208,22 @@ function groupByDay(events) {
   return groups;
 }
 
+function leaguesRepresented(events) {
+  const ids = new Set(events.map((event) => event.leagueId));
+  return LEAGUES.filter((league) => ids.has(league.id));
+}
+
+function hasScore(event) {
+  return (event.state === 'in' || event.state === 'post')
+    && event.awayScore !== ''
+    && event.homeScore !== '';
+}
+
 export default function SportsCalendar() {
   const saved = useRef(readFilters());
+  const allowSave = useRef(Boolean(saved.current));
   const [view, setView] = useState('month');
+  const [calendarView, setCalendarView] = useState('month');
   const [cursor, setCursor] = useState(() => new Date());
   const [leagueIds, setLeagueIds] = useState(() => saved.current?.leagueIds || LEAGUES.map((league) => league.id));
   const [teamKeys, setTeamKeys] = useState(() => saved.current?.teamKeys || []);
@@ -134,22 +238,59 @@ export default function SportsCalendar() {
   const [notice, setNotice] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(() => !saved.current);
+  const [themeChoice, setThemeChoice] = useState(readThemeChoice);
+  const [systemDark, setSystemDark] = useState(systemIsDark);
   const cacheRef = useRef(new Map());
   const inflight = useRef(new Map());
   const seasonRef = useRef(new Set());
+  const storeRef = useRef(store);
+  const viewRef = useRef(view);
+  const activeRef = useRef([]);
+  const theme = themeChoice === 'system' ? (systemDark ? 'dark' : 'light') : themeChoice;
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#141210' : '#f4f1ea');
+  }, [theme]);
 
   useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => setSystemDark(media.matches);
+    media.addEventListener?.('change', onChange);
+    return () => media.removeEventListener?.('change', onChange);
+  }, []);
+
+  function toggleTheme() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setThemeChoice(next);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // The toggle still applies for this visit.
+    }
+  }
+
+  useEffect(() => {
+    if (!allowSave.current) return;
     writeFilters(leagueIds, teamKeys);
   }, [leagueIds, teamKeys]);
 
   useEffect(() => {
     let cancelled = false;
     setTeamsLoading(true);
-    Promise.allSettled(LEAGUES.map((league) => fetchLeagueTeams(league))).then((results) => {
-      if (cancelled) return;
-      const loaded = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
-      setTeams(loaded);
-      setTeamsLoading(false);
+    Promise.allSettled(LEAGUES.map((league) => fetchLeagueTeams(league).then((loaded) => {
+      if (cancelled || !loaded?.length) return;
+      setTeams((current) => {
+        const map = new Map(current.map((team) => [team.key, team]));
+        for (const team of loaded) map.set(team.key, team);
+        return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+      });
+    }))).finally(() => {
+      if (!cancelled) setTeamsLoading(false);
     });
     return () => {
       cancelled = true;
@@ -189,6 +330,49 @@ export default function SportsCalendar() {
     () => leaguesForTeams(leagueIds, teamKeys),
     [leagueIds, teamKeys]
   );
+  storeRef.current = store;
+  viewRef.current = view;
+  activeRef.current = activeLeagues;
+
+  const refreshLive = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const events = dedupeEvents(Object.values(storeRef.current).flat());
+    const viewNow = viewRef.current;
+    const watchToday = viewNow === 'today' || viewNow === 'home';
+    const liveEvents = events.filter((event) => event.state === 'in');
+    if (!liveEvents.length && !watchToday) return;
+    const jobs = new Map();
+    const consider = (league, year, month) => {
+      if (!league) return;
+      jobs.set(`${league.id}:${year}-${month}`, { league, year, month });
+    };
+    if (watchToday) {
+      for (const league of activeRef.current) {
+        for (const ym of monthsForView('today', new Date())) consider(league, ym.year, ym.month);
+      }
+    }
+    for (const event of liveEvents) {
+      consider(leagueById(event.leagueId), event.start.getFullYear(), event.start.getMonth() + 1);
+    }
+    await Promise.all([...jobs.values()].map(async (job) => {
+      try {
+        const loaded = await refreshLeagueMonth(job.league, job.year, job.month);
+        const key = `${job.league.id}:${job.year}-${job.month}`;
+        cacheRef.current.set(key, loaded);
+        setStore((current) => ({ ...current, [key]: loaded }));
+      } catch {
+        // Keep the score already on screen.
+      }
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!activeLeagues.length) return undefined;
+    const timer = window.setInterval(() => {
+      refreshLive();
+    }, LIVE_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [activeLeagues, refreshLive]);
 
   useEffect(() => {
     if (!activeLeagues.length) return undefined;
@@ -216,7 +400,8 @@ export default function SportsCalendar() {
 
   useEffect(() => {
     if (!activeLeagues.length) return;
-    loadMonths(activeLeagues, monthsForView(view, cursor));
+    const scheduleView = view === 'home' ? 'month' : view;
+    loadMonths(activeLeagues, monthsForView(scheduleView, cursor));
   }, [activeLeagues, view, cursor, loadMonths, reloadToken]);
 
   useEffect(() => {
@@ -228,7 +413,24 @@ export default function SportsCalendar() {
     return () => window.removeEventListener('keydown', onKey);
   }, [dialog]);
 
-  const period = useMemo(() => periodBounds(view, cursor), [view, cursor]);
+  const closePicker = useCallback((nextView) => {
+    allowSave.current = true;
+    writeFilters(leagueIds, teamKeys);
+    setPickerOpen(false);
+    if (nextView) setView(nextView);
+  }, [leagueIds, teamKeys]);
+
+  useEffect(() => {
+    if (!pickerOpen) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') closePicker();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pickerOpen, closePicker]);
+
+  const periodView = view === 'home' ? 'month' : view;
+  const period = useMemo(() => periodBounds(periodView, cursor), [periodView, cursor]);
   const allEvents = useMemo(() => dedupeEvents(Object.values(store).flat()), [store]);
   const filtered = useMemo(
     () => collapseConferenceDuplicates(filterEvents(allEvents, { leagueIds, teamKeys })),
@@ -250,9 +452,15 @@ export default function SportsCalendar() {
     [filtered, gridRange]
   );
   const directory = useMemo(() => mergeTeams(teams, allEvents), [teams, allEvents]);
-  const label = periodTitle(view, cursor);
+  const label = view === 'home' ? 'My Teams' : periodTitle(view, cursor);
   const selectedTeams = directory.filter((team) => teamKeys.includes(team.key));
   const query = teamSearch.trim().toLowerCase();
+  const dialogEvent = useMemo(() => {
+    if (dialog?.type !== 'event') return null;
+    return filtered.find((event) => event.id === dialog.event.id)
+      || allEvents.find((event) => event.id === dialog.event.id)
+      || dialog.event;
+  }, [dialog, filtered, allEvents]);
 
   const leagueCounts = useMemo(() => {
     const counts = Object.fromEntries(LEAGUES.map((league) => [league.id, 0]));
@@ -265,15 +473,23 @@ export default function SportsCalendar() {
     return counts;
   }, [allEvents, period, teamKeys]);
 
-  const visibleMonthKeys = monthsForView(view, cursor).flatMap((ym) => (
+  const visibleMonthKeys = monthsForView(view === 'home' ? 'month' : view, cursor).flatMap((ym) => (
     activeLeagues.map((league) => `${league.id}:${ym.year}-${ym.month}`)
   ));
   const hasError = visibleMonthKeys.some((key) => errors[key]);
-  const countLabel = teamKeys.length === 0
-    ? 'No teams selected'
-    : pending > 0 && periodEvents.length === 0
-      ? 'Loading games…'
-      : `${periodEvents.length} ${periodEvents.length === 1 ? 'game' : 'games'}`;
+  const countLabel = view === 'home'
+    ? (teamKeys.length === 0 ? 'No teams selected' : `${teamKeys.length} ${teamKeys.length === 1 ? 'team' : 'teams'}`)
+    : teamKeys.length === 0
+      ? 'No teams selected'
+      : pending > 0 && periodEvents.length === 0
+        ? 'Loading games…'
+        : `${periodEvents.length} ${periodEvents.length === 1 ? 'game' : 'games'}`;
+  const calendarOn = view === 'month' || view === 'week' || view === 'list';
+
+  function chooseView(id) {
+    setView(id);
+    if (id === 'month' || id === 'week' || id === 'list') setCalendarView(id);
+  }
 
   function shift(direction) {
     setCursor((current) => (view === 'week' ? addWeeks(current, direction) : addMonths(current, direction)));
@@ -291,6 +507,12 @@ export default function SportsCalendar() {
     ));
   }
 
+  function pickTeam(key) {
+    const leagueId = key.split(':')[0];
+    setLeagueIds((current) => (current.includes(leagueId) ? current : [...current, leagueId]));
+    toggleTeam(key);
+  }
+
   function toggleOpenLeague(id) {
     setOpenLeagues((current) => (
       current.includes(id) ? current.filter((leagueId) => leagueId !== id) : [...current, id]
@@ -301,7 +523,7 @@ export default function SportsCalendar() {
     if (!teamKeys.length || !events.length) return;
     const filename = events.length === 1
       ? singleEventFilename(events[0])
-      : buildFilename({ leagueIds, view, start: period.start });
+      : buildFilename({ leagueIds, view: view === 'home' ? 'month' : view, start: period.start });
     downloadIcs(filename, buildIcs(events));
     setNotice(`Downloaded ${filename}`);
   }
@@ -317,276 +539,348 @@ export default function SportsCalendar() {
   }
 
   return (
-    <div className="ss-app">
-      <header className="ss-header">
-        <div className="ss-brand">
-          <span className="ss-mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" width="32" height="32">
-              <rect width="32" height="32" rx="8" fill="#1c1917" />
-              <rect x="6" y="8" width="20" height="16" rx="3" fill="#fffaf3" />
-              <path d="M6 11h20v4H6z" fill="#9f1239" />
-              <circle cx="16" cy="19" r="2.2" fill="#1c1917" />
-            </svg>
-          </span>
-          <div>
-            <h1>SportSync</h1>
-            <p>NBA, WNBA, MLB, NFL, NCAAF, SEC, Big Ten, and NHL in one calendar.</p>
-          </div>
-        </div>
-        <div className="ss-header-actions">
-          <button
-            type="button"
-            className="ss-btn ss-filter-toggle"
-            aria-expanded={filtersOpen}
-            onClick={() => setFiltersOpen((open) => !open)}
-          >
-            Filters{teamKeys.length ? ` · ${teamKeys.length}` : ''}
-          </button>
-          <button
-            type="button"
-            className="ss-btn primary"
-            onClick={() => handleDownload()}
-            disabled={!teamKeys.length || !periodEvents.length}
-            aria-label={`Download iCal file for ${label}`}
-          >
-            Download .ics
-          </button>
-          <button
-            type="button"
-            className="ss-btn"
-            onClick={() => setDialog({ type: 'export' })}
-            disabled={!teamKeys.length || !periodEvents.length}
-          >
-            Add to Google Calendar
-          </button>
-        </div>
-      </header>
-
-      <div className="ss-body">
-        <aside className={`ss-sidebar${filtersOpen ? ' is-open' : ''}`}>
-          <div className="ss-side-block">
-            <h2>Leagues</h2>
-            <div className="ss-leagues">
-              {LEAGUES.map((league) => {
-                const on = leagueIds.includes(league.id);
-                return (
-                  <button
-                    key={league.id}
-                    type="button"
-                    className={`ss-league${on ? ' is-on' : ''}`}
-                    aria-pressed={on}
-                    aria-label={league.fullName === league.name ? league.name : `${league.name} ${league.fullName}`}
-                    onClick={() => toggleLeague(league.id)}
-                  >
-                    <span className="ss-dot" style={{ background: league.color }} aria-hidden="true" />
-                    <span>{league.name}</span>
-                    <span className="ss-league-count" aria-hidden="true">{leagueCounts[league.id] || 0}</span>
-                  </button>
-                );
-              })}
+    <ThemeContext.Provider value={theme}>
+      <div className={`ss-app${pickerOpen ? ' is-picking' : ''}`}>
+        <header className="ss-header">
+          <div className="ss-brand">
+            <span className="ss-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" width="32" height="32">
+                <rect width="32" height="32" rx="8" fill="#1c1917" />
+                <rect x="6" y="8" width="20" height="16" rx="3" fill="#fffaf3" />
+                <path d="M6 11h20v4H6z" fill="#9f1239" />
+                <circle cx="16" cy="19" r="2.2" fill="#1c1917" />
+              </svg>
+            </span>
+            <div>
+              <h1>SportSync</h1>
+              <p>NBA, WNBA, MLB, NFL, NCAAF, SEC, Big Ten, and NHL in one calendar.</p>
             </div>
           </div>
+          <div className="ss-header-actions">
+            <button
+              type="button"
+              className={`ss-btn ss-theme${theme === 'dark' ? ' is-on' : ''}`}
+              aria-pressed={theme === 'dark'}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={toggleTheme}
+            >
+              Dark mode
+            </button>
+            <button
+              type="button"
+              className="ss-btn ss-filter-toggle"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
+            >
+              Filters{teamKeys.length ? ` · ${teamKeys.length}` : ''}
+            </button>
+            <button
+              type="button"
+              className="ss-btn primary"
+              onClick={() => setDialog({ type: 'export' })}
+              disabled={!teamKeys.length || !periodEvents.length}
+            >
+              Export
+            </button>
+          </div>
+        </header>
 
-          <div className="ss-side-block ss-teams-block">
-            <div className="ss-teams-head">
-              <h2>Teams</h2>
-              {teamKeys.length > 0 && (
-                <button type="button" className="ss-text-btn" onClick={() => setTeamKeys([])}>
-                  Clear
-                </button>
-              )}
-            </div>
-            <input
-              type="search"
-              className="ss-search"
-              placeholder="Search teams"
-              aria-label="Search teams"
-              value={teamSearch}
-              onChange={(event) => setTeamSearch(event.target.value)}
-            />
-            <div className="ss-team-scroll">
-              {teamsLoading && teams.length === 0 && <p className="ss-muted">Loading teams…</p>}
-              {LEAGUES.filter((league) => leagueIds.includes(league.id)).map((league) => {
-                const leagueTeams = directory.filter((team) => team.leagueId === league.id);
-                const visible = leagueTeams.filter((team) => (
-                  !query
-                  || team.name.toLowerCase().includes(query)
-                  || team.abbreviation.toLowerCase().includes(query)
-                ));
-                const expanded = Boolean(query) || openLeagues.includes(league.id);
-                return (
-                  <section key={league.id} className="ss-team-group">
+        <div className="ss-body">
+          <aside className={`ss-sidebar${filtersOpen ? ' is-open' : ''}`}>
+            <div className="ss-side-block">
+              <h2>Leagues</h2>
+              <div className="ss-leagues">
+                {LEAGUES.map((league) => {
+                  const on = leagueIds.includes(league.id);
+                  return (
                     <button
+                      key={league.id}
                       type="button"
-                      className="ss-team-group-toggle"
-                      aria-expanded={expanded}
-                      onClick={() => toggleOpenLeague(league.id)}
+                      className={`ss-league${on ? ' is-on' : ''}`}
+                      aria-pressed={on}
+                      aria-label={league.fullName === league.name ? league.name : `${league.name} ${league.fullName}`}
+                      onClick={() => toggleLeague(league.id)}
                     >
-                      <span>{league.fullName}</span>
-                      <span className="ss-muted">{expanded ? 'Hide' : 'Show'}</span>
+                      <span className="ss-dot" style={{ background: league.color }} aria-hidden="true" />
+                      <span>{league.name}</span>
+                      <span className="ss-league-count" aria-hidden="true">{leagueCounts[league.id] || 0}</span>
                     </button>
-                    {expanded && (
-                      visible.length === 0
-                        ? <p className="ss-muted">{query ? 'No teams match.' : 'No teams loaded.'}</p>
-                        : visible.map((team) => (
-                          <label key={team.key} className="ss-team">
-                            <input
-                              type="checkbox"
-                              checked={teamKeys.includes(team.key)}
-                              onChange={() => toggleTeam(team.key)}
-                            />
-                            <span>{team.name}</span>
-                          </label>
-                        ))
-                    )}
-                  </section>
-                );
-              })}
-              {leagueIds.length === 0 && <p className="ss-muted">Turn a league on to filter its teams.</p>}
+                  );
+                })}
+              </div>
             </div>
-            <p className="ss-attrib">Schedules from ESPN. NCAAF is FBS. SEC and Big Ten are those conference slates.</p>
-          </div>
-        </aside>
 
-        <main className="ss-main">
-          <div className="ss-toolbar">
-            <div className="ss-nav">
-              <button type="button" className="ss-btn" onClick={() => setCursor(new Date())}>Today</button>
-              <button type="button" className="ss-icon-btn" aria-label="Previous" onClick={() => shift(-1)} disabled={view === 'today'}>‹</button>
-              <button type="button" className="ss-icon-btn" aria-label="Next" onClick={() => shift(1)} disabled={view === 'today'}>›</button>
-              <h2>{label}</h2>
+            <div className="ss-side-block ss-teams-block">
+              <div className="ss-teams-head">
+                <h2>Teams</h2>
+                {teamKeys.length > 0 && (
+                  <button type="button" className="ss-text-btn" onClick={() => setTeamKeys([])}>
+                    Clear
+                  </button>
+                )}
+              </div>
+              <input
+                type="search"
+                className="ss-search"
+                placeholder="Search teams"
+                aria-label="Search teams"
+                value={teamSearch}
+                onChange={(event) => setTeamSearch(event.target.value)}
+              />
+              <div className="ss-team-scroll">
+                {teamsLoading && teams.length === 0 && <p className="ss-muted">Loading teams…</p>}
+                {LEAGUES.filter((league) => leagueIds.includes(league.id)).map((league) => {
+                  const leagueTeams = directory.filter((team) => team.leagueId === league.id);
+                  const visible = leagueTeams.filter((team) => (
+                    !query
+                    || team.name.toLowerCase().includes(query)
+                    || team.abbreviation.toLowerCase().includes(query)
+                  ));
+                  const expanded = Boolean(query) || openLeagues.includes(league.id);
+                  return (
+                    <section key={league.id} className="ss-team-group">
+                      <button
+                        type="button"
+                        className="ss-team-group-toggle"
+                        aria-expanded={expanded}
+                        onClick={() => toggleOpenLeague(league.id)}
+                      >
+                        <span>{league.fullName}</span>
+                        <span className="ss-muted">{expanded ? 'Hide' : 'Show'}</span>
+                      </button>
+                      {expanded && (
+                        visible.length === 0
+                          ? <p className="ss-muted">{query ? 'No teams match.' : 'No teams loaded.'}</p>
+                          : visible.map((team) => (
+                            <label key={team.key} className="ss-team">
+                              <input
+                                type="checkbox"
+                                checked={teamKeys.includes(team.key)}
+                                onChange={() => toggleTeam(team.key)}
+                              />
+                              <Logo src={team.logo} className="ss-team-logo" />
+                              <span>{team.name}</span>
+                            </label>
+                          ))
+                      )}
+                    </section>
+                  );
+                })}
+                {leagueIds.length === 0 && <p className="ss-muted">Turn a league on to filter its teams.</p>}
+              </div>
+              <p className="ss-attrib">Schedules from ESPN. NCAAF is FBS. SEC and Big Ten are those conference slates.</p>
             </div>
-            <p className="ss-count" role="status">{countLabel}</p>
-            <div className="ss-views" role="group" aria-label="Calendar view">
-              {[
-                ['today', "Today's games"],
-                ['month', 'Month'],
-                ['week', 'Week'],
-                ['list', 'List'],
-              ].map(([id, name]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`ss-view${view === id ? ' is-on' : ''}`}
-                  aria-pressed={view === id}
-                  onClick={() => setView(id)}
-                >
-                  {name}
-                </button>
-              ))}
+          </aside>
+
+          <main className="ss-main">
+            <div className="ss-toolbar">
+              <div className="ss-nav">
+                <button type="button" className="ss-btn" aria-label="Jump to today" onClick={() => setCursor(new Date())}>Today</button>
+                <button type="button" className="ss-icon-btn" aria-label="Previous" onClick={() => shift(-1)} disabled={view === 'today' || view === 'home'}>‹</button>
+                <button type="button" className="ss-icon-btn" aria-label="Next" onClick={() => shift(1)} disabled={view === 'today' || view === 'home'}>›</button>
+                <h2>{label}</h2>
+              </div>
+              <p className="ss-count" role="status">{countLabel}</p>
+              <div className="ss-views" role="group" aria-label="Calendar view">
+                {[
+                  ['today', "Today's games", 'ss-view-today'],
+                  ['home', 'My Teams', 'ss-view-home'],
+                  ['month', 'Month', ''],
+                  ['week', 'Week', ''],
+                  ['list', 'List', ''],
+                ].map(([id, name, extra]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`ss-view ${extra}${view === id ? ' is-on' : ''}`}
+                    aria-pressed={view === id}
+                    onClick={() => chooseView(id)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {selectedTeams.length > 0 && (
-            <div className="ss-chips" aria-label="Selected teams">
-              {selectedTeams.map((team) => (
-                <button key={team.key} type="button" className="ss-chip-btn" onClick={() => toggleTeam(team.key)}>
-                  {team.name}
-                  <span aria-hidden="true">×</span>
-                </button>
-              ))}
-            </div>
-          )}
+            {view !== 'home' && selectedTeams.length > 0 && (
+              <div className="ss-chips" aria-label="Selected teams">
+                {selectedTeams.map((team) => (
+                  <button key={team.key} type="button" className="ss-chip-btn" onClick={() => toggleTeam(team.key)}>
+                    <Logo src={team.logo} className="ss-chip-logo" />
+                    {team.name}
+                    <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-          {hasError && (
-            <div className="ss-banner" role="alert">
-              <span>Some schedules didn’t load.</span>
-              <button type="button" className="ss-text-btn" onClick={retry}>Retry</button>
-            </div>
-          )}
+            {hasError && (
+              <div className="ss-banner" role="alert">
+                <span>Some schedules didn’t load.</span>
+                <button type="button" className="ss-text-btn" onClick={retry}>Retry</button>
+              </div>
+            )}
 
-          {pending > 0 && <div className="ss-loading" role="status">Loading schedules…</div>}
+            {pending > 0 && view !== 'home' && <div className="ss-loading" role="status">Loading schedules…</div>}
 
-          {view === 'list' || view === 'today' ? (
-            <ListView
-              events={periodEvents}
-              pending={pending}
-              leagueIds={leagueIds}
-              teamKeys={teamKeys}
-              today={view === 'today'}
-              onOpen={(event) => setDialog({ type: 'event', event })}
-              onClearTeams={() => setTeamKeys([])}
-              onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
-            />
-          ) : (
-            <div className="ss-calendar">
-              {gridEvents.length === 0 && !pending ? (
+            {view === 'home' && (
+              <TeamHome
+                teams={selectedTeams}
+                events={filtered}
+                pending={pending}
+                leagueIds={leagueIds}
+                teamKeys={teamKeys}
+                onOpen={(event) => setDialog({ type: 'event', event })}
+                onChoose={() => setPickerOpen(true)}
+                onClearTeams={() => setTeamKeys([])}
+                onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
+              />
+            )}
+
+            {(view === 'list' || view === 'today') && (
+              <ListView
+                events={periodEvents}
+                pending={pending}
+                leagueIds={leagueIds}
+                teamKeys={teamKeys}
+                today={view === 'today'}
+                onOpen={(event) => setDialog({ type: 'event', event })}
+                onClearTeams={() => setTeamKeys([])}
+                onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
+                onChoose={() => setPickerOpen(true)}
+              />
+            )}
+
+            {view === 'month' && (
+              gridEvents.length === 0 && !pending ? (
                 <EmptyState
                   leagueIds={leagueIds}
                   teamKeys={teamKeys}
                   onClearTeams={() => setTeamKeys([])}
                   onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
+                  onChoose={() => setPickerOpen(true)}
                 />
               ) : (
-                <Calendar
-                  localizer={localizer}
-                  culture="en-US"
+                <MonthBoard
+                  cursor={cursor}
                   events={gridEvents}
-                  startAccessor="start"
-                  endAccessor="end"
-                  titleAccessor="title"
-                  tooltipAccessor="fullTitle"
-                  view={view}
-                  date={cursor}
-                  onNavigate={setCursor}
-                  onView={setView}
-                  views={['month', 'week']}
-                  toolbar={false}
-                  popup
-                  selectable={false}
-                  style={{ height: '100%' }}
-                  eventPropGetter={eventPropGetter}
-                  components={{ event: CalendarEvent }}
-                  onSelectEvent={(event) => setDialog({ type: 'event', event })}
-                  onDrillDown={(date) => {
-                    setCursor(date);
-                    setView('week');
-                  }}
-                  scrollToTime={new Date(1970, 0, 1, 12, 0, 0)}
+                  onOpen={(event) => setDialog({ type: 'event', event })}
                 />
-              )}
-            </div>
-          )}
-        </main>
+              )
+            )}
+
+            {view === 'week' && (
+              <div className="ss-calendar">
+                {gridEvents.length === 0 && !pending ? (
+                  <EmptyState
+                    leagueIds={leagueIds}
+                    teamKeys={teamKeys}
+                    onClearTeams={() => setTeamKeys([])}
+                    onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
+                    onChoose={() => setPickerOpen(true)}
+                  />
+                ) : (
+                  <Calendar
+                    localizer={localizer}
+                    culture="en-US"
+                    events={gridEvents}
+                    startAccessor="start"
+                    endAccessor="end"
+                    titleAccessor="title"
+                    tooltipAccessor="fullTitle"
+                    view="week"
+                    date={cursor}
+                    onNavigate={setCursor}
+                    views={['week']}
+                    toolbar={false}
+                    selectable={false}
+                    style={{ height: '100%' }}
+                    eventPropGetter={eventPropGetter}
+                    components={{ event: CalendarEvent }}
+                    onSelectEvent={(event) => setDialog({ type: 'event', event })}
+                    scrollToTime={new Date(1970, 0, 1, 12, 0, 0)}
+                  />
+                )}
+              </div>
+            )}
+          </main>
+        </div>
+
+        <nav className="ss-tabbar" aria-label="Primary">
+          <button
+            type="button"
+            className={`ss-tab${view === 'today' ? ' is-on' : ''}`}
+            aria-label="Today tab"
+            aria-current={view === 'today' ? 'page' : undefined}
+            onClick={() => chooseView('today')}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            className={`ss-tab${calendarOn ? ' is-on' : ''}`}
+            aria-label="Calendar tab"
+            aria-current={calendarOn ? 'page' : undefined}
+            onClick={() => setView(calendarView)}
+          >
+            Calendar
+          </button>
+          <button
+            type="button"
+            className={`ss-tab${view === 'home' ? ' is-on' : ''}`}
+            aria-label="My Teams tab"
+            aria-current={view === 'home' ? 'page' : undefined}
+            onClick={() => chooseView('home')}
+          >
+            My Teams
+          </button>
+        </nav>
+
+        {notice && (
+          <div className="ss-toast" role="status">{notice}</div>
+        )}
+
+        {dialogEvent && (
+          <EventDialog
+            event={dialogEvent}
+            onClose={() => setDialog(null)}
+            onDownload={() => handleDownload([dialogEvent])}
+          />
+        )}
+        {dialog?.type === 'export' && (
+          <ExportDialog
+            events={periodEvents}
+            label={label}
+            leagueIds={leagueIds}
+            teamKeys={teamKeys}
+            onClose={() => setDialog(null)}
+            onDownload={() => handleDownload()}
+          />
+        )}
+        {pickerOpen && (
+          <TeamPicker
+            teams={directory}
+            teamsLoading={teamsLoading}
+            teamKeys={teamKeys}
+            onToggle={pickTeam}
+            onSkip={() => closePicker()}
+            onContinue={() => closePicker('home')}
+          />
+        )}
       </div>
-
-      {notice && (
-        <div className="ss-toast" role="status">{notice}</div>
-      )}
-
-      {dialog?.type === 'event' && (
-        <EventDialog
-          event={dialog.event}
-          onClose={() => setDialog(null)}
-          onDownload={() => handleDownload([dialog.event])}
-        />
-      )}
-      {dialog?.type === 'export' && (
-        <ExportDialog
-          events={periodEvents}
-          label={label}
-          leagueIds={leagueIds}
-          teamKeys={teamKeys}
-          onClose={() => setDialog(null)}
-          onDownload={() => handleDownload()}
-        />
-      )}
-    </div>
+    </ThemeContext.Provider>
   );
 }
 
-function hasScore(event) {
-  return (event.state === 'in' || event.state === 'post')
-    && event.awayScore !== ''
-    && event.homeScore !== '';
-}
-
-function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues, today = false }) {
+function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues, onChoose, today = false }) {
   if (!teamKeys.length) {
     return (
       <div className="ss-empty">
         <h3>No games yet</h3>
         <p>Pick a team to see its games.</p>
+        {onChoose && (
+          <button type="button" className="ss-btn primary" onClick={onChoose}>Choose teams</button>
+        )}
       </div>
     );
   }
@@ -610,7 +904,22 @@ function EmptyState({ leagueIds, teamKeys, onClearTeams, onShowLeagues, today = 
   );
 }
 
-function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen, onClearTeams, onShowLeagues }) {
+function ScoreLine({ event }) {
+  if (event.state === 'in' && hasScore(event)) {
+    return (
+      <span className="ss-live-wrap">
+        {' · '}
+        <span className="ss-live">LIVE</span>
+        {' '}
+        <span className="ss-live-score">{event.awayScore}–{event.homeScore}</span>
+      </span>
+    );
+  }
+  if (hasScore(event)) return ` · ${event.awayScore}–${event.homeScore}`;
+  return null;
+}
+
+function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen, onClearTeams, onShowLeagues, onChoose }) {
   if (!events.length) {
     if (teamKeys.length && pending) return <p className="ss-muted ss-list-loading">Loading games…</p>;
     return (
@@ -620,6 +929,7 @@ function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen,
         today={today}
         onClearTeams={onClearTeams}
         onShowLeagues={onShowLeagues}
+        onChoose={onChoose}
       />
     );
   }
@@ -631,8 +941,15 @@ function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen,
           <h3 className="ss-day-label">{group.label}</h3>
           <div className="ss-day-games">
             {group.events.map((event) => (
-              <article key={event.id} className="ss-game" style={{ '--league': event.color }}>
+              <article key={event.id} className="ss-game" style={rowStyle(event)}>
                 <div className="ss-game-time">{event.allDay ? 'Time TBD' : format(event.start, 'h:mm a')}</div>
+                <div className="ss-matchup" aria-hidden="true">
+                  <Logo src={event.awayLogo} className="ss-matchup-logo" />
+                  <span>{event.awayAbbr}</span>
+                  <span className="ss-at">@</span>
+                  <Logo src={event.homeLogo} className="ss-matchup-logo" />
+                  <span>{event.homeAbbr}</span>
+                </div>
                 <div className="ss-game-body">
                   <button type="button" className="ss-game-title" onClick={() => onOpen(event)}>
                     {event.fullTitle}
@@ -641,10 +958,11 @@ function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen,
                     <span className="ss-league-name" style={{ color: event.color }}>{event.leagueName}</span>
                     {event.venue ? ` · ${event.venue}` : ''}
                     {event.broadcasts.length ? ` · ${event.broadcasts.join(', ')}` : ''}
-                    {hasScore(event) ? ` · ${event.awayScore}–${event.homeScore}` : ''}
+                    <ScoreLine event={event} />
                     {event.status && event.status !== 'Scheduled' ? ` · ${event.status}` : ''}
                   </p>
                 </div>
+                <WinChance event={event} />
                 <div className="ss-game-actions">
                   <a className="ss-btn small" href={googleCalendarUrl(event)} target="_blank" rel="noopener noreferrer">
                     Add to Google Calendar
@@ -659,13 +977,310 @@ function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen,
   );
 }
 
+function WinChance({ event, teamKey }) {
+  const [chance, setChance] = useState(null);
+  useEffect(() => {
+    if (!event || event.state === 'in' || event.state === 'post') {
+      setChance(null);
+      return undefined;
+    }
+    let cancel = false;
+    loadGameOdds(event).then((result) => {
+      if (cancel) return;
+      setChance(compactWinChance(result.quotes, event, { teamKey }));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [event, teamKey]);
+  if (!chance) return null;
+  const label = `${chance.text} from ${chance.source}`;
+  if (chance.url) {
+    return (
+      <a className="ss-win" href={chance.url} target="_blank" rel="noopener noreferrer" aria-label={label} title={label}>
+        {chance.text}
+      </a>
+    );
+  }
+  return <span className="ss-win" title={label}>{chance.text}</span>;
+}
+
+function OddsSummary({ event, teamKey }) {
+  const [state, setState] = useState({ loading: true, quotes: [], message: '' });
+  useEffect(() => {
+    let cancel = false;
+    setState({ loading: true, quotes: [], message: '' });
+    loadGameOdds(event).then((result) => {
+      if (cancel) return;
+      setState({ loading: false, quotes: result.quotes, message: result.message });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [event]);
+  const chance = compactWinChance(state.quotes, event, { teamKey });
+  return (
+    <div className="ss-odds-compact" aria-live="polite">
+      {state.loading && <p className="ss-muted">Checking Polymarket and Kalshi…</p>}
+      {chance && (
+        chance.url ? (
+          <a className="ss-win" href={chance.url} target="_blank" rel="noopener noreferrer" aria-label={`${chance.text} from ${chance.source}`}>
+            {chance.text}
+          </a>
+        ) : (
+          <span className="ss-win">{chance.text}</span>
+        )
+      )}
+      {!state.loading && state.quotes.map((quote) => (
+        <p key={quote.source} className="ss-odds-line">
+          <span className="ss-odds-source-name">{quote.source}</span>
+          {quote.sides.map((side) => {
+            const text = `${side.label} ${side.price}`;
+            return side.url ? (
+              <a key={`${quote.source}-${side.label}`} href={side.url} target="_blank" rel="noopener noreferrer">{text}</a>
+            ) : (
+              <span key={`${quote.source}-${side.label}`}>{text}</span>
+            );
+          })}
+        </p>
+      ))}
+      {!state.loading && !state.quotes.length && <p className="ss-muted">{state.message}</p>}
+    </div>
+  );
+}
+
+function TeamHome({ teams, events, pending, leagueIds, teamKeys, onOpen, onChoose, onClearTeams, onShowLeagues }) {
+  if (!teamKeys.length) {
+    return (
+      <EmptyState
+        leagueIds={leagueIds}
+        teamKeys={teamKeys}
+        onChoose={onChoose}
+        onClearTeams={onClearTeams}
+        onShowLeagues={onShowLeagues}
+      />
+    );
+  }
+  if (!events.length && pending) return <p className="ss-muted ss-list-loading">Loading games…</p>;
+  const now = new Date();
+  const cards = teams
+    .map((team) => ({ team, ...teamSnapshot(team.key, events, now) }))
+    .sort((a, b) => (a.next?.start?.getTime() ?? Infinity) - (b.next?.start?.getTime() ?? Infinity) || a.team.name.localeCompare(b.team.name));
+  return (
+    <div className="ss-home-grid">
+      {cards.map(({ team, next, last, live }) => {
+        const league = leagueById(team.leagueId);
+        const featured = live || next;
+        return (
+          <article key={team.key} className="ss-team-card" style={{ '--team': team.color || league?.color }}>
+            <header className="ss-team-card-head">
+              <Logo src={team.logo} className="ss-card-logo" />
+              <div>
+                <h3>{team.name}</h3>
+                <p>{league?.name}</p>
+              </div>
+            </header>
+            <section>
+              <h4>Next game</h4>
+              {featured ? (
+                <>
+                  <button type="button" className="ss-game-title" onClick={() => onOpen(featured)}>
+                    {featured.fullTitle}
+                  </button>
+                  <p className="ss-muted">{shortWhen(featured)}</p>
+                  {featured.state === 'in' && (
+                    <p className="ss-live-wrap">
+                      <span className="ss-live">LIVE</span>
+                      {hasScore(featured) && (
+                        <span className="ss-live-score">{featured.awayScore}–{featured.homeScore}</span>
+                      )}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="ss-muted">No upcoming game</p>
+              )}
+            </section>
+            <section>
+              <h4>Last score</h4>
+              {last ? (
+                <p className="ss-last-score">
+                  {last.awayAbbr} {last.awayScore} – {last.homeAbbr} {last.homeScore}
+                  <span className="ss-muted"> · Final</span>
+                </p>
+              ) : (
+                <p className="ss-muted">No final score yet</p>
+              )}
+            </section>
+            <section>
+              <h4>Odds</h4>
+              {featured && featured.state !== 'in' && <OddsSummary event={featured} teamKey={team.key} />}
+              {featured?.state === 'in' && <p className="ss-muted">The live score is on this card.</p>}
+              {!featured && <p className="ss-muted">No upcoming game to price.</p>}
+            </section>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function MonthBoard({ cursor, events, onOpen }) {
+  const [expanded, setExpanded] = useState(null);
+  const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 0 });
+  const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: 0 });
+  const days = eachDayOfInterval({ start, end });
+  const byDay = useMemo(() => {
+    const map = new Map();
+    for (const event of events) {
+      const key = format(event.start, 'yyyy-MM-dd');
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(event);
+    }
+    for (const list of map.values()) list.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
+    return map;
+  }, [events]);
+
+  return (
+    <section className="ss-month" aria-label={format(cursor, 'MMMM yyyy')}>
+      <div className="ss-month-dow">
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+          <div key={day}>{day}</div>
+        ))}
+      </div>
+      <div className="ss-month-grid">
+        {days.map((day) => {
+          const key = format(day, 'yyyy-MM-dd');
+          const games = byDay.get(key) || [];
+          const busy = games.length >= BUSY_DAY;
+          const open = expanded === key;
+          const leagues = leaguesRepresented(games);
+          return (
+            <div
+              key={key}
+              className={`ss-day${isSameMonth(day, cursor) ? '' : ' is-out'}${isSameDay(day, new Date()) ? ' is-today' : ''}${open ? ' is-open' : ''}`}
+            >
+              <div className="ss-day-num">{format(day, 'd')}</div>
+              {busy ? (
+                <button
+                  type="button"
+                  className="ss-day-count"
+                  aria-expanded={open}
+                  onClick={() => setExpanded(open ? null : key)}
+                >
+                  <span>{open ? `Hide ${games.length} games` : `${games.length} games`}</span>
+                  <span className="ss-league-dots" aria-hidden="true">
+                    {leagues.map((league) => (
+                      <span key={league.id} className="ss-dot" style={{ background: league.color }} />
+                    ))}
+                  </span>
+                </button>
+              ) : null}
+              {(!busy || open) && (
+                <div className="ss-day-list">
+                  {games.map((event) => (
+                    <button
+                      key={event.id}
+                      type="button"
+                      className="ss-mini"
+                      style={chipStyle(event)}
+                      onClick={() => onOpen(event)}
+                    >
+                      <Logo src={event.awayLogo} className="ss-chip-logo" />
+                      <span>{event.title}</span>
+                      <Logo src={event.homeLogo} className="ss-chip-logo" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TeamPicker({ teams, teamsLoading, teamKeys, onToggle, onSkip, onContinue }) {
+  const [query, setQuery] = useState('');
+  const [leagueFilter, setLeagueFilter] = useState('all');
+  const needle = query.trim().toLowerCase();
+  const visible = teams.filter((team) => {
+    if (leagueFilter !== 'all' && team.leagueId !== leagueFilter) return false;
+    if (!needle) return true;
+    return team.name.toLowerCase().includes(needle) || team.abbreviation.toLowerCase().includes(needle);
+  });
+  return (
+    <div className="ss-picker">
+      <div className="ss-picker-head">
+        <div>
+          <p className="ss-kicker">First visit</p>
+          <h2>Choose your teams</h2>
+          <p className="ss-muted">Search or tap a logo. The calendar stays empty until you follow a team.</p>
+        </div>
+        <div className="ss-picker-actions">
+          <button type="button" className="ss-btn" onClick={onSkip}>Not now</button>
+          <button type="button" className="ss-btn primary" onClick={onContinue} disabled={!teamKeys.length}>
+            Show my teams{teamKeys.length ? ` · ${teamKeys.length}` : ''}
+          </button>
+        </div>
+      </div>
+      <input
+        type="search"
+        className="ss-search ss-picker-search"
+        placeholder="Search teams"
+        aria-label="Find a team"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div className="ss-picker-leagues" role="group" aria-label="Filter teams by league">
+        <button type="button" aria-pressed={leagueFilter === 'all'} aria-label="All teams" onClick={() => setLeagueFilter('all')}>All</button>
+        {LEAGUES.map((league) => (
+          <button
+            key={league.id}
+            type="button"
+            aria-pressed={leagueFilter === league.id}
+            aria-label={`${league.name} teams`}
+            onClick={() => setLeagueFilter(league.id)}
+          >
+            <span className="ss-dot" style={{ background: league.color }} aria-hidden="true" />
+            {league.name}
+          </button>
+        ))}
+      </div>
+      <div className="ss-logo-grid">
+        {teamsLoading && teams.length === 0 && <p className="ss-muted">Loading teams…</p>}
+        {!teamsLoading && visible.length === 0 && <p className="ss-muted">No teams match.</p>}
+        {visible.map((team) => {
+          const on = teamKeys.includes(team.key);
+          const league = leagueById(team.leagueId);
+          return (
+            <button
+              key={team.key}
+              type="button"
+              className={`ss-logo-card${on ? ' is-on' : ''}`}
+              aria-pressed={on}
+              aria-label={on ? `Remove ${team.name}` : `Follow ${team.name}`}
+              onClick={() => onToggle(team.key)}
+            >
+              <Logo src={team.logo} className="ss-picker-logo" />
+              <span className="ss-logo-name">{team.name}</span>
+              <span className="ss-muted">{league?.name} · {team.abbreviation}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function GameOdds({ event }) {
   const [state, setState] = useState({ loading: true, quotes: [], message: '' });
 
   useEffect(() => {
     let cancel = false;
     setState({ loading: true, quotes: [], message: '' });
-    fetchGameOdds(event).then((result) => {
+    loadGameOdds(event).then((result) => {
       if (cancel) return;
       setState({ loading: false, quotes: result.quotes, message: result.message });
     });
@@ -708,7 +1323,7 @@ function EventDialog({ event, onClose, onDownload }) {
   return (
     <div className="ss-backdrop" onClick={onClose}>
       <div
-        className="ss-dialog"
+        className="ss-dialog ss-sheet"
         role="dialog"
         aria-modal="true"
         aria-labelledby="ss-event-title"
@@ -716,13 +1331,28 @@ function EventDialog({ event, onClose, onDownload }) {
         ref={ref}
         onClick={(click) => click.stopPropagation()}
       >
+        <div className="ss-sheet-handle" aria-hidden="true" />
         <p className="ss-kicker" style={{ color: event.color }}>{event.leagueName}</p>
+        <div className="ss-dialog-teams">
+          <div>
+            <Logo src={event.awayLogo} className="ss-dialog-logo" />
+            <strong>{event.awayTeam || event.awayAbbr || 'Away'}</strong>
+          </div>
+          <div>
+            <Logo src={event.homeLogo} className="ss-dialog-logo" />
+            <strong>{event.homeTeam || event.homeAbbr || 'Home'}</strong>
+          </div>
+        </div>
         <h2 id="ss-event-title">{event.fullTitle}</h2>
         <p>{formatWhen(event)}</p>
         {event.venue && <p>{event.venue}</p>}
         {(event.state === 'in' || event.state === 'post') && (
           <>
-            <p className="ss-status">{event.status || (event.state === 'post' ? 'Final' : 'In progress')}</p>
+            <p className="ss-status">
+              {event.state === 'in' && <span className="ss-live">LIVE</span>}
+              {' '}
+              {event.status || (event.state === 'post' ? 'Final' : 'In progress')}
+            </p>
             {hasScore(event) ? (
               <p className="ss-score">
                 <span>{event.awayAbbr || event.awayTeam} {event.awayScore}</span>
@@ -793,7 +1423,7 @@ function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload 
   return (
     <div className="ss-backdrop" onClick={onClose}>
       <div
-        className="ss-dialog"
+        className="ss-dialog ss-sheet"
         role="dialog"
         aria-modal="true"
         aria-labelledby="ss-export-title"
@@ -801,16 +1431,24 @@ function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload 
         ref={ref}
         onClick={(click) => click.stopPropagation()}
       >
-        <h2 id="ss-export-title">Add to Google Calendar</h2>
+        <div className="ss-sheet-handle" aria-hidden="true" />
+        <h2 id="ss-export-title">Export</h2>
         <p>
           {label} · {leagueLabel} · {teamLabel} · {events.length} {events.length === 1 ? 'game' : 'games'}
         </p>
         <ol className="ss-steps">
-          <li>Open a game and choose Add to Google Calendar. Google opens with the time and venue filled in. Save the event there.</li>
-          <li>For the whole filtered schedule, download the .ics file and import it in Google Calendar under Settings → Import &amp; export.</li>
+          <li>Download an .ics file and import it in Apple Calendar, Google Calendar, or Outlook.</li>
+          <li>Open Google Calendar import, then choose that file under Settings → Import &amp; export.</li>
+          <li>Or open a game and choose Add to Google Calendar to save that game on its own.</li>
         </ol>
         <div className="ss-dialog-actions">
-          <button type="button" className="ss-btn primary" onClick={onDownload} disabled={!events.length}>
+          <button
+            type="button"
+            className="ss-btn primary"
+            onClick={onDownload}
+            disabled={!events.length}
+            aria-label={`Download iCal file for ${label}`}
+          >
             Download .ics
           </button>
           <a

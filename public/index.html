@@ -5,7 +5,18 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" sizes="any" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#1c1917" />
+    <meta name="theme-color" content="#f4f1ea" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('sportsync.theme');
+          var theme = saved === 'light' || saved === 'dark'
+            ? saved
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {}
+      })();
+    </script>
     <meta
       name="description"
       content="SportSync is a calendar for NBA, MLB, NFL, NCAAF, SEC, Big Ten, and NHL. Filter teams and export games to iCal or Google Calendar."

@@ -199,6 +199,102 @@ function isTbd(team) {
   return !abbr || abbr === 'TBD' || name === 'TBD' || !team.id;
 }
 
+const LOGO_SLUG = {
+  nba: 'nba',
+  wnba: 'wnba',
+  mlb: 'mlb',
+  nfl: 'nfl',
+  nhl: 'nhl',
+  ncaaf: 'ncaa',
+  sec: 'ncaa',
+  bigten: 'ncaa',
+};
+
+export function hexColor(value) {
+  const raw = String(value || '').trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{3}$/.test(raw)) {
+    return `#${raw.split('').map((char) => `${char}${char}`).join('').toLowerCase()}`;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(raw)) return `#${raw.toLowerCase()}`;
+  return '';
+}
+
+function httpsLogo(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:') return '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+function logoRank(logo) {
+  const rel = logo?.rel || [];
+  if (rel.includes('dark')) return 4;
+  if (rel.includes('default')) return 0;
+  if (rel.includes('full') && !rel.includes('scoreboard')) return 1;
+  if (rel.includes('scoreboard')) return 3;
+  return 2;
+}
+
+/** Full ESPN mark. Scoreboard crops are rewritten to the 500px logo. */
+export function logoFromEspnTeam(team) {
+  if (!team) return '';
+  const logos = Array.isArray(team.logos) ? [...team.logos].sort((a, b) => logoRank(a) - logoRank(b)) : [];
+  const fromList = httpsLogo(logos[0]?.href);
+  const direct = httpsLogo(team.logo);
+  const chosen = (fromList && !/\/scoreboard\//.test(fromList) ? fromList : '')
+    || (direct && !/\/scoreboard\//.test(direct) ? direct : '')
+    || fromList
+    || direct;
+  return chosen.replace('/500/scoreboard/', '/500/').replace('/500-dark/scoreboard/', '/500-dark/');
+}
+
+export function fallbackLogo(leagueId, team) {
+  if (!team || isTbd(team)) return '';
+  const slug = LOGO_SLUG[leagueId];
+  if (!slug) return '';
+  if (slug === 'ncaa') {
+    const id = String(team.id || '');
+    if (!/^\d+$/.test(id)) return '';
+    return `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
+  }
+  const abbr = String(team.abbreviation || '').toLowerCase();
+  if (!/^[a-z0-9]+$/.test(abbr) || abbr === 'tbd') return '';
+  return `https://a.espncdn.com/i/teamlogos/${slug}/500/${abbr}.png`;
+}
+
+export function teamBrand(league, team) {
+  return {
+    logo: logoFromEspnTeam(team) || fallbackLogo(league?.id, team),
+    color: hexColor(team?.color) || hexColor(team?.alternateColor) || league?.color || '#78716c',
+  };
+}
+
+export function themedLogo(url, theme) {
+  if (!url) return '';
+  if (theme !== 'dark' || url.includes('/500-dark/')) return url;
+  return url.replace('/500/', '/500-dark/');
+}
+
+function presentTeam(league, team) {
+  if (!team?.id || String(team.id) === 'undefined' || !team.displayName) return null;
+  const abbreviation = team.abbreviation || '';
+  if (!abbreviation || abbreviation === 'TBD') return null;
+  const brand = teamBrand(league, team);
+  return {
+    key: `${league.id}:${team.id}`,
+    id: String(team.id),
+    leagueId: league.id,
+    name: team.displayName,
+    abbreviation,
+    logo: brand.logo,
+    color: brand.color,
+  };
+}
+
 function teamKey(league, team) {
   if (isTbd(team)) return '';
   return `${league.id}:${team.id}`;
@@ -243,6 +339,8 @@ export function normalizeEvents(league, data) {
 
     const link = (event.links || []).find((item) => typeof item.href === 'string' && item.href.startsWith('http'));
     const college = league.path === 'football/college-football';
+    const homeBrand = teamBrand(league, home);
+    const awayBrand = teamBrand(league, away);
 
     return [{
       id: `${league.id}-${event.id}`,
@@ -262,6 +360,10 @@ export function normalizeEvents(league, data) {
       awayAbbr: away.abbreviation || '',
       homeKey: teamKey(league, home),
       awayKey: teamKey(league, away),
+      homeLogo: homeBrand.logo,
+      awayLogo: awayBrand.logo,
+      homeColor: homeBrand.color,
+      awayColor: awayBrand.color,
       venue: venueLabel(competition),
       broadcasts: broadcastNames(competition),
       status: competition.status?.type?.description || event.status?.type?.description || '',
@@ -278,14 +380,8 @@ export function normalizeEvents(league, data) {
 export function normalizeTeams(league, data) {
   const teams = data?.sports?.[0]?.leagues?.[0]?.teams || [];
   return teams
-    .map(({ team }) => ({
-      key: `${league.id}:${team.id}`,
-      id: String(team.id),
-      leagueId: league.id,
-      name: team.displayName,
-      abbreviation: team.abbreviation || '',
-    }))
-    .filter((team) => team.id && team.id !== 'undefined' && team.name && team.abbreviation && team.abbreviation !== 'TBD')
+    .map(({ team }) => presentTeam(league, team))
+    .filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -459,6 +555,22 @@ export function eventsInPeriod(events, start, end) {
   return events.filter((event) => event.start >= start && event.start <= end);
 }
 
+/** Next game prefers a live one. Last score is the latest final at or before now. */
+export function teamSnapshot(teamKey, events, now = new Date()) {
+  const mine = (events || [])
+    .filter((event) => event.homeKey === teamKey || event.awayKey === teamKey)
+    .sort((a, b) => a.start - b.start || String(a.title).localeCompare(String(b.title)));
+  const live = mine.find((event) => event.state === 'in') || null;
+  const next = live || mine.find((event) => event.state !== 'post' && event.start >= now) || null;
+  const last = [...mine].reverse().find((event) => (
+    event.state === 'post'
+    && event.start <= now
+    && event.awayScore !== ''
+    && event.homeScore !== ''
+  )) || null;
+  return { next, last, live };
+}
+
 async function loadLeagueMonth(league, year, month) {
   const data = await fetchJson(scoreboardMonthUrl(league, year, month));
   return normalizeEvents(league, data);
@@ -474,6 +586,14 @@ export function fetchLeagueMonth(league, year, month) {
     monthCache.set(key, pending);
   }
   return monthCache.get(key);
+}
+
+/** Bypass the month cache so a live score can replace the copy on screen. */
+export function refreshLeagueMonth(league, year, month) {
+  const key = `${league.id}:${year}-${month}`;
+  monthCache.delete(key);
+  jsonCache.delete(scoreboardMonthUrl(league, year, month));
+  return fetchLeagueMonth(league, year, month);
 }
 
 async function fetchGroupTeamRefs(seasonYear, groupId) {
@@ -493,16 +613,7 @@ async function fetchGroupTeamRefs(seasonYear, groupId) {
 }
 
 function teamFromCore(league, data) {
-  if (!data?.id || !data.displayName) return null;
-  const abbreviation = data.abbreviation || '';
-  if (!abbreviation || abbreviation === 'TBD') return null;
-  return {
-    key: `${league.id}:${data.id}`,
-    id: String(data.id),
-    leagueId: league.id,
-    name: data.displayName,
-    abbreviation,
-  };
+  return presentTeam(league, data);
 }
 
 async function mapPool(items, limit, fn) {
@@ -550,17 +661,20 @@ export function mergeTeams(teams, events) {
   const map = new Map(teams.map((team) => [team.key, team]));
   for (const event of events) {
     [
-      ['homeKey', 'homeTeam', 'homeAbbr'],
-      ['awayKey', 'awayTeam', 'awayAbbr'],
-    ].forEach(([keyName, name, abbr]) => {
+      ['homeKey', 'homeTeam', 'homeAbbr', 'homeLogo', 'homeColor'],
+      ['awayKey', 'awayTeam', 'awayAbbr', 'awayLogo', 'awayColor'],
+    ].forEach(([keyName, name, abbr, logoName, colorName]) => {
       const key = event[keyName];
       if (!key || map.has(key)) return;
+      const id = key.split(':')[1];
       map.set(key, {
         key,
-        id: key.split(':')[1],
+        id,
         leagueId: event.leagueId,
         name: event[name] || event[abbr] || 'Team',
         abbreviation: event[abbr] || '',
+        logo: event[logoName] || fallbackLogo(event.leagueId, { id, abbreviation: event[abbr] }),
+        color: event[colorName] || leagueById(event.leagueId)?.color || '#78716c',
       });
     });
   }
