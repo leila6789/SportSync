@@ -18,6 +18,8 @@
   background: var(--header);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ss-header-row {
@@ -207,6 +209,8 @@
 
 .ss-league-anchor {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ss-leagues {
@@ -215,6 +219,9 @@
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1154,6 +1161,9 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   padding: 20px 22px 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .ss-picker-head,
@@ -1183,6 +1193,12 @@ input:focus-visible {
   color: var(--muted);
 }
 
+.ss-picker-head,
+.ss-picker-leagues,
+.ss-picker .ss-search {
+  flex: none;
+}
+
 .ss-picker-leagues {
   display: flex;
   flex-wrap: nowrap;
@@ -1190,6 +1206,9 @@ input:focus-visible {
   overflow-x: auto;
   overflow-y: hidden;
   padding: 2px 2px 10px;
+  min-width: 0;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1231,10 +1250,13 @@ input:focus-visible {
 
 .ss-logo-grid {
   overflow: auto;
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
   gap: 10px;
   padding: 8px 0 24px;
+  align-content: start;
 }
 
 .ss-logo-card {
@@ -1264,6 +1286,138 @@ input:focus-visible {
 
 .ss-logo-card .ss-muted {
   font-size: 11px;
+}
+
+.ss-theme-icon {
+  display: none;
+}
+
+.ss-phone-month {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.ss-phone-dow,
+.ss-phone-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.ss-phone-dow span {
+  padding: 8px 0 4px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.ss-phone-day {
+  min-height: 44px;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 0 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ss-phone-day.is-out {
+  color: var(--muted);
+}
+
+.ss-phone-day.is-on {
+  background: var(--today);
+}
+
+.ss-phone-day .ss-day-num {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ss-phone-day.is-today .ss-day-num {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ss-phone-day .ss-league-dots {
+  min-height: 6px;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+.ss-phone-day .ss-dot {
+  width: 5px;
+  height: 5px;
+}
+
+.ss-phone-agenda {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 120px;
+  scroll-margin-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+
+.ss-agenda-game {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ss-agenda-kicker,
+.ss-agenda-match,
+.ss-agenda-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ss-agenda-kicker,
+.ss-agenda-meta {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ss-agenda-match {
+  width: 100%;
+}
+
+.ss-agenda-match strong {
+  min-width: 0;
+  font-size: 16px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .ss-tabbar {
@@ -1307,6 +1461,341 @@ input:focus-visible {
     display: none;
   }
 
+  .ss-app {
+    padding-bottom: 0;
+  }
+
+  html {
+    scroll-padding-top: 120px;
+    scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .ss-header {
+    gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 0 8px;
+  }
+
+  .ss-header-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  }
+
+  .ss-brand {
+    flex: 1;
+    gap: 8px;
+  }
+
+  .ss-brand h1 {
+    font-size: 20px;
+    white-space: nowrap;
+  }
+
+  .ss-brand p,
+  .ss-export-slot,
+  .ss-home-tools {
+    display: none;
+  }
+
+  .ss-mark svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .ss-header-actions {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .ss-theme {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .ss-theme-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .ss-theme-icon {
+    display: block;
+    line-height: 0;
+  }
+
+  .ss-filter-toggle,
+  .ss-toolbar .ss-btn,
+  .ss-empty .ss-btn,
+  .ss-banner .ss-text-btn {
+    min-height: 44px;
+  }
+
+  .ss-banner .ss-text-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    padding: 8px 12px;
+  }
+
+  .ss-filter-toggle {
+    padding: 0 12px;
+    white-space: nowrap;
+  }
+
+  .ss-leagues {
+    padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .ss-leagues::-webkit-scrollbar,
+  .ss-picker-leagues::-webkit-scrollbar,
+  .ss-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ss-league {
+    scroll-snap-align: start;
+  }
+
+  .ss-league-menu {
+    left: 0;
+    right: 0;
+    width: auto;
+    border-radius: 0 0 18px 18px;
+    border-left: 0;
+    border-right: 0;
+    max-height: min(62dvh, calc(100dvh - 128px - env(safe-area-inset-bottom)));
+  }
+
+  .ss-league-menu .ss-search,
+  .ss-sidebar .ss-search,
+  .ss-picker .ss-search {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .ss-league-row {
+    min-height: 48px;
+    padding: 8px;
+  }
+
+  .ss-league-row input,
+  .ss-team input {
+    width: 22px;
+    height: 22px;
+  }
+
+  .ss-main {
+    padding: 12px 16px calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .ss-body,
+  .ss-main,
+  .ss-list,
+  .ss-home,
+  .ss-month,
+  .ss-calendar,
+  .ss-toolbar,
+  .ss-game,
+  .ss-team-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .ss-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .ss-nav {
+    flex-wrap: nowrap;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .ss-nav h2 {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  .ss-count {
+    margin: 0 0 0 4px;
+    font-size: 13px;
+  }
+
+  .ss-icon-btn {
+    width: 44px;
+    height: 44px;
+    flex: none;
+  }
+
+  .ss-views {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 6px;
+  }
+
+  .ss-view {
+    min-height: 44px;
+    padding: 8px 4px;
+    text-align: center;
+  }
+
+  .ss-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .ss-chip-btn {
+    flex: none;
+    min-height: 44px;
+    max-width: 240px;
+    padding: 8px 12px;
+  }
+
+  .ss-calendar {
+    height: auto;
+    min-height: 0;
+    overflow-x: auto;
+  }
+
+  .ss-game {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "time matchup"
+      "body body"
+      "win win";
+    gap: 6px 10px;
+    padding: 12px;
+  }
+
+  .ss-game-time {
+    grid-area: time;
+    align-self: center;
+  }
+
+  .ss-matchup {
+    grid-area: matchup;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .ss-game-body {
+    grid-area: body;
+    min-width: 0;
+  }
+
+  .ss-game .ss-win {
+    grid-area: win;
+    justify-self: start;
+  }
+
+  .ss-game-title {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+    font-size: 16px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .ss-game-body p,
+  .ss-last-score,
+  .ss-team-card h3,
+  .ss-logo-name {
+    overflow-wrap: anywhere;
+  }
+
+  .ss-win,
+  .ss-odds a,
+  .ss-odds-line a {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+
+  .ss-odds a,
+  .ss-odds-line a {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .ss-sidebar.is-open {
+    max-height: min(46dvh, 380px);
+  }
+
+  .ss-team,
+  .ss-team-group-toggle,
+  .ss-sidebar .ss-text-btn {
+    min-height: 44px;
+  }
+
+  .ss-team {
+    align-items: center;
+  }
+
+  .ss-sidebar .ss-text-btn {
+    padding: 8px;
+  }
+
+  .ss-home-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .ss-team-card {
+    padding: 14px;
+  }
+
+  .ss-team-card-head {
+    align-items: flex-start;
+  }
+
+  .ss-team-card-head > div {
+    min-width: 0;
+  }
+
+  .ss-team-card h3 {
+    font-size: 20px;
+  }
+
+  .ss-card-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .ss-last-score {
+    font-size: 20px;
+  }
+
+  .ss-empty {
+    min-height: 180px;
+    padding: 20px 4px;
+  }
+
   .ss-tabbar {
     display: flex;
     position: fixed;
@@ -1316,18 +1805,20 @@ input:focus-visible {
     z-index: 30;
     background: var(--surface);
     border-top: 1px solid var(--line);
-    padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+    padding: 4px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
     justify-content: space-around;
     gap: 6px;
   }
 
   .ss-tab {
     flex: 1;
+    min-height: 44px;
     border: 0;
     background: transparent;
     color: var(--muted);
+    font-size: 13px;
     font-weight: 750;
-    padding: 10px 4px;
+    padding: 8px 4px;
     border-radius: 12px;
   }
 
@@ -1348,20 +1839,77 @@ input:focus-visible {
     cursor: not-allowed;
   }
 
-  .ss-app {
-    padding-bottom: calc(72px + env(safe-area-inset-bottom));
-  }
-
   .ss-backdrop {
+    z-index: 50;
     align-items: flex-end;
-    padding: 0 0 calc(68px + env(safe-area-inset-bottom));
+    padding: 0;
   }
 
   .ss-dialog.ss-sheet {
     width: 100%;
-    max-height: min(86vh, 760px);
-    border-radius: 18px 18px 0 0;
-    padding-bottom: calc(22px + env(safe-area-inset-bottom));
+    max-height: min(88dvh, 760px);
+    border-radius: 20px 20px 0 0;
+    padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .ss-dialog h2 {
+    font-size: 24px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  .ss-dialog-teams {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+  }
+
+  .ss-dialog-teams > div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .ss-dialog-teams strong {
+    font-size: 14px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .ss-dialog-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .ss-score {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    font-size: 24px;
+  }
+
+  .ss-dialog-actions {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+
+  .ss-dialog-actions .ss-btn,
+  .ss-dialog-actions a,
+  .ss-dialog-actions .ss-text-btn,
+  .ss-sync .ss-btn,
+  .ss-sheet > .ss-text-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .ss-sheet > .ss-text-btn {
+    margin-top: 4px;
   }
 
   .ss-sheet-handle {
@@ -1374,45 +1922,56 @@ input:focus-visible {
   }
 
   .ss-toast {
-    bottom: calc(84px + env(safe-area-inset-bottom));
+    left: 16px;
+    right: 16px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    text-align: center;
   }
 
   .ss-game-actions {
     display: none;
   }
 
-  .ss-header {
-    padding-left: 0;
-    padding-right: 0;
-  }
-
-  .ss-header-row,
-  .ss-leagues {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-
-  .ss-league-menu {
-    left: 0;
-    right: 0;
-    width: auto;
-    border-radius: 0 0 18px 18px;
-    border-left: 0;
-    border-right: 0;
-    max-height: calc(100dvh - 180px - 88px - env(safe-area-inset-bottom));
-  }
-
   .ss-picker {
-    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom));
   }
 
   .ss-picker-head {
     flex-direction: column;
     align-items: stretch;
+    gap: 12px;
   }
 
   .ss-picker h2 {
-    font-size: 32px;
+    font-size: 28px;
+    line-height: 1.1;
+  }
+
+  .ss-picker-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 8px;
+  }
+
+  .ss-picker-actions .ss-btn {
+    min-height: 44px;
+    justify-content: center;
+    padding: 8px 10px;
+    text-align: center;
+    line-height: 1.2;
+  }
+
+  .ss-logo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+
+  .ss-logo-card {
+    min-width: 0;
+    min-height: 128px;
+    padding: 12px 8px;
   }
 }
 

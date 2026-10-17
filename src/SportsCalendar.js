@@ -105,6 +105,23 @@ function systemIsDark() {
     && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
+function isPhoneLayout() {
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 800px)').matches;
+}
+
+function usePhoneLayout() {
+  const [phone, setPhone] = useState(isPhoneLayout);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia('(max-width: 800px)');
+    const onChange = () => setPhone(media.matches);
+    media.addEventListener?.('change', onChange);
+    return () => media.removeEventListener?.('change', onChange);
+  }, []);
+  return phone;
+}
+
 function withAlpha(hex, alpha) {
   const raw = String(hex || '').replace('#', '');
   if (!/^[0-9a-fA-F]{6}$/.test(raw)) return 'transparent';
@@ -304,8 +321,9 @@ function hasScore(event) {
 export default function SportsCalendar() {
   const saved = useRef(readFilters());
   const allowSave = useRef(Boolean(saved.current));
-  const [view, setView] = useState('month');
-  const [calendarView, setCalendarView] = useState('month');
+  const phone = usePhoneLayout();
+  const [view, setView] = useState(() => (isPhoneLayout() ? 'list' : 'month'));
+  const [calendarView, setCalendarView] = useState(() => (isPhoneLayout() ? 'list' : 'month'));
   const [cursor, setCursor] = useState(() => new Date());
   const [leagueIds, setLeagueIds] = useState(() => saved.current?.leagueIds || LEAGUES.map((league) => league.id));
   const [teamKeys, setTeamKeys] = useState(() => saved.current?.teamKeys || []);
@@ -544,7 +562,7 @@ export default function SportsCalendar() {
       const node = leagueBarRef.current;
       if (!node) return;
       const bottom = node.getBoundingClientRect().bottom;
-      const reserve = window.innerWidth <= 800 ? 112 : 24;
+      const reserve = window.innerWidth <= 800 ? 128 : 24;
       setMenuMaxHeight(Math.max(160, Math.floor(window.innerHeight - bottom - reserve)));
     };
     place();
@@ -710,7 +728,19 @@ export default function SportsCalendar() {
               aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               onClick={toggleTheme}
             >
-              Dark mode
+              <span className="ss-theme-icon" aria-hidden="true">
+                {theme === 'dark' ? (
+                  <svg viewBox="0 0 24 24" width="20" height="20">
+                    <circle cx="12" cy="12" r="4" fill="currentColor" />
+                    <path fill="currentColor" d="M12 2h1v3h-1zm0 17h1v3h-1zM2 12h3v1H2zm17 0h3v1h-3zM4.9 4.2l.7-.7 2.1 2.1-.7.7zM16.3 16.9l.7-.7 2.1 2.1-.7.7zM4.2 19.1l2.1-2.1.7.7-2.1 2.1zM16.9 4.9l2.1-2.1.7.7-2.1 2.1z" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="20" height="20">
+                    <path fill="currentColor" d="M14.5 2.4a9 9 0 1 0 7.1 13.2A8 8 0 0 1 14.5 2.4z" />
+                  </svg>
+                )}
+              </span>
+              <span className="ss-theme-label">Dark mode</span>
             </button>
             <button
               type="button"
@@ -936,12 +966,26 @@ export default function SportsCalendar() {
                 <MonthBoard
                   cursor={cursor}
                   events={gridEvents}
+                  phone={phone}
                   onOpen={(event) => setDialog({ type: 'event', event })}
                 />
               )
             )}
 
-            {view === 'week' && (
+            {view === 'week' && phone && (
+              <ListView
+                events={periodEvents}
+                pending={pending}
+                leagueIds={leagueIds}
+                teamKeys={teamKeys}
+                onOpen={(event) => setDialog({ type: 'event', event })}
+                onClearTeams={() => setTeamKeys([])}
+                onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
+                onChoose={() => setPickerOpen(true)}
+              />
+            )}
+
+            {view === 'week' && !phone && (
               <div className="ss-calendar">
                 {gridEvents.length === 0 && !pending ? (
                   <EmptyState
@@ -1338,7 +1382,109 @@ function TeamHome({ teams, events, pending, leagueIds, teamKeys, onOpen, onChoos
   );
 }
 
-function MonthBoard({ cursor, events, onOpen }) {
+function PhoneMonth({ cursor, events, onOpen }) {
+  const agendaRef = useRef(null);
+  const [selected, setSelected] = useState(() => {
+    const today = new Date();
+    return format(isSameMonth(today, cursor) ? today : startOfMonth(cursor), 'yyyy-MM-dd');
+  });
+  useEffect(() => {
+    const today = new Date();
+    setSelected(format(isSameMonth(today, cursor) ? today : startOfMonth(cursor), 'yyyy-MM-dd'));
+  }, [cursor]);
+  useEffect(() => {
+    const node = agendaRef.current;
+    if (!node) return undefined;
+    const reveal = () => {
+      const tab = document.querySelector('.ss-tabbar');
+      const limit = (tab?.getBoundingClientRect().top ?? window.innerHeight) - 8;
+      if (node.getBoundingClientRect().bottom > limit) {
+        node.scrollIntoView({ block: 'nearest' });
+      }
+    };
+    reveal();
+    return undefined;
+  }, [selected]);
+
+  const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 0 });
+  const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: 0 });
+  const days = eachDayOfInterval({ start, end });
+  const byDay = useMemo(() => {
+    const map = new Map();
+    for (const event of events) {
+      const key = format(event.start, 'yyyy-MM-dd');
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(event);
+    }
+    for (const list of map.values()) list.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
+    return map;
+  }, [events]);
+  const selectedDate = parse(selected, 'yyyy-MM-dd', new Date());
+  const selectedGames = byDay.get(selected) || [];
+
+  return (
+    <section className="ss-phone-month" aria-label={format(cursor, 'MMMM yyyy')}>
+      <div className="ss-phone-dow" aria-hidden="true">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+          <span key={`${day}-${index}`}>{day}</span>
+        ))}
+      </div>
+      <div className="ss-phone-grid">
+        {days.map((day) => {
+          const key = format(day, 'yyyy-MM-dd');
+          const games = byDay.get(key) || [];
+          const countLabel = games.length === 1 ? '1 game' : `${games.length} games`;
+          return (
+            <button
+              key={key}
+              type="button"
+              className={`ss-phone-day${isSameMonth(day, cursor) ? '' : ' is-out'}${isSameDay(day, new Date()) ? ' is-today' : ''}${key === selected ? ' is-on' : ''}`}
+              aria-pressed={key === selected}
+              aria-label={`${format(day, 'EEEE, MMMM d')}, ${games.length ? countLabel : 'no games'}`}
+              onClick={() => setSelected(key)}
+            >
+              <span className="ss-day-num">{format(day, 'd')}</span>
+              <span className="ss-league-dots">
+                {games.slice(0, 3).map((event) => (
+                  <span key={event.id} className="ss-dot" style={{ background: event.color }} />
+                ))}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="ss-phone-agenda" ref={agendaRef}>
+        <h3 className="ss-day-label">{format(selectedDate, 'EEEE, MMMM d')}</h3>
+        {selectedGames.length === 0 && <p className="ss-muted">No games</p>}
+        {selectedGames.map((event) => (
+          <button
+            key={event.id}
+            type="button"
+            className="ss-agenda-game"
+            onClick={() => onOpen(event)}
+          >
+            <span className="ss-agenda-kicker">
+              <span className="ss-dot" style={{ background: event.color }} aria-hidden="true" />
+              {event.allDay ? 'Time TBD' : format(event.start, 'h:mm a')}
+              <ScoreLine event={event} />
+            </span>
+            <span className="ss-agenda-match">
+              <Logo src={event.awayLogo} className="ss-matchup-logo" />
+              <strong>{event.fullTitle}</strong>
+              <Logo src={event.homeLogo} className="ss-matchup-logo" />
+            </span>
+            <span className="ss-agenda-meta">
+              {event.leagueName}
+              {event.venue ? ` · ${event.venue}` : ''}
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MonthBoard({ cursor, events, onOpen, phone = false }) {
   const [expanded, setExpanded] = useState(null);
   const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 0 });
   const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: 0 });
@@ -1353,6 +1499,8 @@ function MonthBoard({ cursor, events, onOpen }) {
     for (const list of map.values()) list.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
     return map;
   }, [events]);
+
+  if (phone) return <PhoneMonth cursor={cursor} events={events} onOpen={onOpen} />;
 
   return (
     <section className="ss-month" aria-label={format(cursor, 'MMMM yyyy')}>
