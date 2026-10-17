@@ -213,6 +213,29 @@ function leaguesRepresented(events) {
   return LEAGUES.filter((league) => ids.has(league.id));
 }
 
+/**
+ * Badge next to a league. Games are not loaded until a team is followed, so a
+ * game count stays at 0 for every league the user has not picked. Show the
+ * roster size instead, and the followed/available ratio once they pick teams.
+ */
+export function leagueCountLabel(followed, total, loading) {
+  const picked = Number(followed) || 0;
+  const available = Number(total) || 0;
+  if (available > 0 && picked > 0) return `${picked}/${available}`;
+  if (available > 0) return String(available);
+  if (picked > 0) return String(picked);
+  return loading ? '…' : '–';
+}
+
+export function leagueCountTitle(followed, total, loading) {
+  const picked = Number(followed) || 0;
+  const available = Number(total) || 0;
+  if (available > 0 && picked > 0) return `${picked} of ${available} teams followed`;
+  if (available > 0) return `${available} ${available === 1 ? 'team' : 'teams'}`;
+  if (picked > 0) return `${picked} ${picked === 1 ? 'team' : 'teams'} followed`;
+  return loading ? 'Loading teams' : 'No teams loaded';
+}
+
 function hasScore(event) {
   return (event.state === 'in' || event.state === 'post')
     && event.awayScore !== ''
@@ -462,16 +485,23 @@ export default function SportsCalendar() {
       || dialog.event;
   }, [dialog, filtered, allEvents]);
 
-  const leagueCounts = useMemo(() => {
-    const counts = Object.fromEntries(LEAGUES.map((league) => [league.id, 0]));
-    if (!teamKeys.length) return counts;
-    const inPeriod = eventsInPeriod(allEvents, period.start, period.end);
-    for (const event of inPeriod) {
-      if (!teamKeys.includes(event.homeKey) && !teamKeys.includes(event.awayKey)) continue;
-      counts[event.leagueId] += 1;
+  const leagueRoster = useMemo(() => {
+    const totals = Object.fromEntries(LEAGUES.map((league) => [league.id, 0]));
+    const rosterKeys = Object.fromEntries(LEAGUES.map((league) => [league.id, new Set()]));
+    for (const team of teams) {
+      if (!rosterKeys[team.leagueId]) continue;
+      totals[team.leagueId] += 1;
+      rosterKeys[team.leagueId].add(team.key);
     }
-    return counts;
-  }, [allEvents, period, teamKeys]);
+    const followed = Object.fromEntries(LEAGUES.map((league) => [league.id, 0]));
+    for (const key of teamKeys) {
+      const leagueId = String(key).split(':')[0];
+      if (followed[leagueId] == null) continue;
+      if (totals[leagueId] > 0 && !rosterKeys[leagueId].has(key)) continue;
+      followed[leagueId] += 1;
+    }
+    return { totals, followed };
+  }, [teams, teamKeys]);
 
   const visibleMonthKeys = monthsForView(view === 'home' ? 'month' : view, cursor).flatMap((ym) => (
     activeLeagues.map((league) => `${league.id}:${ym.year}-${ym.month}`)
@@ -592,6 +622,8 @@ export default function SportsCalendar() {
               <div className="ss-leagues">
                 {LEAGUES.map((league) => {
                   const on = leagueIds.includes(league.id);
+                  const followed = leagueRoster.followed[league.id];
+                  const total = leagueRoster.totals[league.id];
                   return (
                     <button
                       key={league.id}
@@ -599,11 +631,12 @@ export default function SportsCalendar() {
                       className={`ss-league${on ? ' is-on' : ''}`}
                       aria-pressed={on}
                       aria-label={league.fullName === league.name ? league.name : `${league.name} ${league.fullName}`}
+                      title={leagueCountTitle(followed, total, teamsLoading)}
                       onClick={() => toggleLeague(league.id)}
                     >
                       <span className="ss-dot" style={{ background: league.color }} aria-hidden="true" />
                       <span>{league.name}</span>
-                      <span className="ss-league-count" aria-hidden="true">{leagueCounts[league.id] || 0}</span>
+                      <span className="ss-league-count" aria-hidden="true">{leagueCountLabel(followed, total, teamsLoading)}</span>
                     </button>
                   );
                 })}

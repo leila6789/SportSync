@@ -201,6 +201,8 @@
 .ss-league-count {
   margin-left: auto;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--muted);
 }
 

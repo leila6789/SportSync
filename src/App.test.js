@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { resetGameOddsCache } from './odds';
-import { LIVE_REFRESH_MS } from './SportsCalendar';
+import { LIVE_REFRESH_MS, leagueCountLabel } from './SportsCalendar';
 import { resetScheduleCache } from './schedule';
 
 function jsonResponse(data) {
@@ -204,6 +204,37 @@ beforeEach(() => {
     }
     return jsonResponse({ events: [] });
   });
+});
+
+test('league count label is the roster, then followed out of that roster', () => {
+  expect(leagueCountLabel(0, 0, true)).toBe('…');
+  expect(leagueCountLabel(0, 0, false)).toBe('–');
+  expect(leagueCountLabel(0, 30, false)).toBe('30');
+  expect(leagueCountLabel(2, 30, false)).toBe('2/30');
+  expect(leagueCountLabel(1, 0, false)).toBe('1');
+});
+
+test('league badges show teams available, then how many of them are followed', async () => {
+  render(<App />);
+  const count = (name) => screen.getByRole('button', { name, pressed: true }).querySelector('.ss-league-count');
+  expect(count('NBA')).not.toHaveTextContent('0');
+
+  await waitFor(() => {
+    expect(count('NBA')).toHaveTextContent('2');
+    expect(count('NCAAF College football')).toHaveTextContent('2');
+    expect(count('SEC')).toHaveTextContent('1');
+    expect(count('Big Ten')).toHaveTextContent('1');
+    expect(count('WNBA')).toHaveTextContent('–');
+  });
+
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search teams' }), 'Boston');
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Boston Celtics' }));
+  await waitFor(() => {
+    expect(count('NBA')).toHaveTextContent('1/2');
+  });
+  expect(count('SEC')).toHaveTextContent('1');
+  expect(count('WNBA')).toHaveTextContent('–');
+  expect(screen.getByRole('button', { name: 'NBA', pressed: true })).toHaveAttribute('title', '1 of 2 teams followed');
 });
 
 test('starts empty until a team is picked, then exports that team', async () => {
