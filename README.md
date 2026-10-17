@@ -28,13 +28,13 @@ npm run build
 - An upcoming row shows a compact win chance, such as **JAX 56.5%**, only when Polymarket or Kalshi has posted a single price for both teams. A bid-ask range is not turned into a percentage. The chance links to that market.
 - Busy days in month view show a count and a dot for each league. Click the count to expand the games.
 - **Dark mode** follows this device until you use the toggle. The choice is saved in this browser.
-- **Export** downloads the `.ics` file or opens Google Calendar’s import page for the month, week, or day on screen.
+- **Export** is in the header, on My Teams, and in the phone tab bar. It downloads an `.ics` file or sends you to Google Calendar for every loaded game of the teams you follow, not only the month on screen. It stays off, with a short hint, until a team is followed.
 
 Your league and team choices are saved in this browser.
 
 ## Export
 
-The download and Google Calendar actions follow the teams you selected, for the month (or week) on screen. Both stay unavailable until a team is picked.
+The download and Google Calendar actions follow the teams you selected, for every loaded month of their season. Both stay unavailable until a team is picked.
 
 ### iCal (.ics)
 
@@ -47,7 +47,7 @@ A subscription link (`webcal://`) is not included. Those feeds have to be hosted
 Two paths work without any API key:
 
 1. Open a game and choose **Add to Google Calendar**. Google opens a new event with the title, time, location, and details filled in. Save it.
-2. Choose **Export**, download the `.ics` file, then choose **Open Google Calendar import** and import the file (Settings → Import & export). That adds every game in the current filtered view.
+2. Choose **Export**, then **Add to Google Calendar**. One game opens ready to save. More than one game downloads the `.ics` file and opens Google Calendar’s import page (Settings → Import & export). That adds every loaded game for the teams you follow.
 
 ### Optional direct sync
 
@@ -74,4 +74,4 @@ Do not commit `.env` or `.env.local`.
 - Click a game for details. Past and in-progress games show the ESPN score and status. A live game keeps its red LIVE badge in the detail sheet, and the score updates with the schedule refresh. Upcoming games show Polymarket and Kalshi prices only, each labeled with its site. ESPN spreads, moneylines, and totals are not shown. If neither site has a matching market, the dialog says odds are not posted yet. The compact percentage on a row is one of those posted prices, not a calculated spread or a guess.
 - College football uses that same scoreboard with an ESPN group. `groups=80` is the FBS slate (NCAAF). `groups=8` is the SEC. `groups=5` is the Big Ten. Without a group, ESPN returns only the current week. Requests ask for up to 400 games so a full Saturday slate is not cut off.
 - A game on both the FBS slate and a conference slate is shown once. The conference label wins when that conference is selected.
-- Team pickers read ESPN’s core team API (the public site team list does not allow browser requests). College pickers are the programs in that ESPN group.
+- Team pickers read ESPN’s core team API (the public site team list does not allow browser requests). Teams ESPN marks inactive, such as Japan and Nigeria on the WNBA list, are left out, so the WNBA count is the 15 active clubs. College pickers are the programs in that ESPN group.

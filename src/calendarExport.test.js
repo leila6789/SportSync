@@ -97,4 +97,9 @@ test('names files from the selected leagues', () => {
     view: 'week',
     start: new Date(2026, 9, 4),
   })).toBe('sportsync-nba-week-2026-10-04.ics');
+  expect(buildFilename({
+    leagueIds: ['wnba', 'nba'],
+    view: 'season',
+    start: new Date(2026, 9, 1),
+  })).toBe('sportsync-nba-wnba-season.ics');
 });

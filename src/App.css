@@ -80,9 +80,39 @@
 }
 
 .ss-btn.primary {
-  background: var(--ink);
-  color: var(--sidebar-ink);
-  border-color: var(--ink);
+  background: var(--solid-bg);
+  color: var(--solid-ink);
+  border-color: var(--solid-bg);
+}
+
+.ss-export {
+  min-height: 44px;
+  padding: 10px 18px;
+}
+
+.ss-export-slot,
+.ss-home-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ss-export-slot {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.ss-home-tools {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.ss-export-hint {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
 }
 
 .ss-btn.small {
@@ -178,17 +208,31 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid transparent;
+  border: 1px solid #57534e;
   background: #292524;
-  color: var(--sidebar-ink);
+  color: #f5f0e8;
   border-radius: 12px;
   padding: 8px 10px;
   text-align: left;
+  box-shadow: inset 3px 0 0 var(--league, transparent);
 }
 
 .ss-league.is-on {
   background: #fffaf3;
-  color: var(--ink);
+  color: #1c1917;
+  border-color: #fffaf3;
+}
+
+[data-theme="dark"] .ss-league {
+  background: #2a2623;
+  color: #faf6f1;
+  border-color: #8a817a;
+}
+
+[data-theme="dark"] .ss-league.is-on {
+  background: #f5f0e8;
+  color: #1c1917;
+  border-color: #f5f0e8;
 }
 
 .ss-dot {
@@ -203,7 +247,19 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  color: var(--muted);
+  color: #d6d3d1;
+}
+
+.ss-league.is-on .ss-league-count {
+  color: #44403c;
+}
+
+[data-theme="dark"] .ss-league .ss-league-count {
+  color: #e7e5e4;
+}
+
+[data-theme="dark"] .ss-league.is-on .ss-league-count {
+  color: #44403c;
 }
 
 .ss-search {
@@ -301,9 +357,9 @@
 }
 
 .ss-view.is-on {
-  background: var(--ink);
-  color: var(--sidebar-ink);
-  border-color: var(--ink);
+  background: var(--solid-bg);
+  color: var(--solid-ink);
+  border-color: var(--solid-bg);
 }
 
 .ss-chips {
@@ -316,6 +372,7 @@
 .ss-chip-btn {
   border: 1px solid var(--line);
   background: var(--surface);
+  color: var(--ink);
   border-radius: 999px;
   padding: 4px 10px;
   display: inline-flex;
@@ -488,7 +545,11 @@
 }
 
 .ss-league-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 750;
+  color: var(--ink);
 }
 
 .ss-empty {
@@ -581,11 +642,15 @@
 }
 
 .ss-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--ink);
 }
 
 .ss-steps {
@@ -609,8 +674,8 @@
   bottom: 16px;
   right: 16px;
   z-index: 30;
-  background: var(--ink);
-  color: var(--sidebar-ink);
+  background: var(--solid-bg);
+  color: var(--solid-ink);
   border-radius: 999px;
   padding: 10px 14px;
   box-shadow: var(--shadow);
@@ -994,28 +1059,48 @@ input:focus-visible {
 
 .ss-picker-leagues {
   display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
-  overflow: auto;
-  padding-bottom: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 10px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .ss-picker-leagues button {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-height: 44px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 10px 16px;
+  font-size: 16px;
   font-weight: 700;
+  line-height: 1.2;
   white-space: nowrap;
+  box-shadow: inset 0 -3px 0 var(--league, transparent);
 }
 
 .ss-picker-leagues button[aria-pressed="true"] {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
+  background: var(--solid-bg);
+  color: var(--solid-ink);
+  border-color: var(--solid-bg);
+}
+
+[data-theme="dark"] .ss-picker-leagues button {
+  background: #2c2825;
+  color: #f5f0e8;
+  border-color: #8a817a;
+}
+
+[data-theme="dark"] .ss-picker-leagues button[aria-pressed="true"] {
+  background: #f5f0e8;
+  color: #1c1917;
+  border-color: #f5f0e8;
 }
 
 .ss-logo-grid {
@@ -1073,6 +1158,10 @@ input:focus-visible {
   color: var(--ink);
 }
 
+[data-theme="dark"] .ss-team input {
+  accent-color: #f5f0e8;
+}
+
 [data-theme="dark"] .ss-calendar .rbc-day-bg,
 [data-theme="dark"] .ss-calendar .rbc-time-content,
 [data-theme="dark"] .ss-calendar .rbc-time-header,
@@ -1119,6 +1208,18 @@ input:focus-visible {
   .ss-tab.is-on {
     color: var(--ink);
     background: var(--bg);
+  }
+
+  .ss-tab.ss-tab-export {
+    flex: 1.15;
+    background: var(--solid-bg);
+    color: var(--solid-ink);
+    border-radius: 999px;
+  }
+
+  .ss-tab.ss-tab-export:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .ss-app {

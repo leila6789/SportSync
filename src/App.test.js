@@ -9,6 +9,10 @@ function jsonResponse(data) {
   return { ok: true, status: 200, json: async () => data };
 }
 
+function exportButtons() {
+  return screen.getAllByRole('button', { name: 'Export' });
+}
+
 function competition(home, away, extra = {}) {
   return {
     timeValid: true,
@@ -245,7 +249,10 @@ test('starts empty until a team is picked, then exports that team', async () => 
   expect(screen.getByRole('button', { name: 'WNBA', pressed: true })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'NBA', pressed: true })).toBeInTheDocument();
   expect(screen.getByText('Pick a team to see its games.')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+  const exports = exportButtons();
+  expect(exports.length).toBeGreaterThan(1);
+  expect(exports.every((button) => button.disabled)).toBe(true);
+  expect(screen.getByText('Follow a team to export its calendar.')).toBeInTheDocument();
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalled();
   });
@@ -274,7 +281,7 @@ test('starts empty until a team is picked, then exports that team', async () => 
   await userEvent.click(screen.getByRole('button', { name: 'Alabama Crimson Tide at Georgia Bulldogs' }));
   expect(await screen.findByText('Odds are not posted yet.')).toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+  await userEvent.click(exportButtons()[0]);
   await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
   expect(window.URL.createObjectURL).toHaveBeenCalled();
 });
@@ -345,7 +352,7 @@ test('filters SEC and Big Ten to the selected teams', async () => {
     expect(screen.queryByText('Ohio State Buckeyes at Iowa Hawkeyes')).not.toBeInTheDocument();
   });
   expect(screen.getByText('Vanderbilt Commodores at Georgia Bulldogs')).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+  await userEvent.click(exportButtons()[0]);
   await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
   expect(window.URL.createObjectURL).toHaveBeenCalled();
 });
@@ -576,7 +583,7 @@ test('shows a selected WNBA team schedule and its market links', async () => {
   expect(kalshi).toHaveAttribute('target', '_blank');
 
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+  await userEvent.click(exportButtons()[0]);
   await userEvent.click(screen.getByRole('button', { name: /Download iCal/i }));
   expect(window.URL.createObjectURL).toHaveBeenCalled();
 });
@@ -782,6 +789,87 @@ test('refreshes a live score on an interval', async () => {
   } finally {
     spy.mockRestore();
   }
+});
+
+test('exports the full loaded season for followed teams', async () => {
+  const now = new Date();
+  const later = new Date(now.getFullYear(), now.getMonth() + 2, 15, 19, 0, 0);
+  const laterStamp = `${later.getFullYear()}${String(later.getMonth() + 1).padStart(2, '0')}`;
+  const currentStamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('/teams')) {
+      const teams = href.includes('/nba/')
+        ? [{ team: { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS', isActive: true } }]
+        : [];
+      return jsonResponse({ sports: [{ leagues: [{ teams }] }] });
+    }
+    if (href.includes(`dates=${laterStamp}`)) {
+      return jsonResponse({
+        events: [{
+          id: 'nba-later',
+          date: later.toISOString(),
+          name: 'Boston Celtics at New York Knicks',
+          season: { slug: 'regular-season' },
+          competitions: [competition(
+            { id: '18', displayName: 'New York Knicks', abbreviation: 'NY' },
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+          )],
+        }],
+      });
+    }
+    if (href.includes(`dates=${currentStamp}`)) {
+      return jsonResponse({
+        events: [{
+          id: 'nba-now',
+          date: new Date(now.getFullYear(), now.getMonth(), 8, 19, 0, 0).toISOString(),
+          name: 'Boston Celtics at Cleveland Cavaliers',
+          season: { slug: 'regular-season' },
+          competitions: [competition(
+            { id: '5', displayName: 'Cleveland Cavaliers', abbreviation: 'CLE' },
+            { id: '2', displayName: 'Boston Celtics', abbreviation: 'BOS' },
+          )],
+        }],
+      });
+    }
+    if (href.includes('scoreboard')) {
+      return jsonResponse({
+        leagues: [{ calendar: [now.toISOString(), later.toISOString()] }],
+      });
+    }
+    return jsonResponse({ events: [] });
+  });
+
+  let calendarFile = '';
+  window.URL.createObjectURL = jest.fn((blob) => {
+    calendarFile = blob;
+    return 'blob:sportsync';
+  });
+
+  render(<App />);
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Boston Celtics' }));
+  await waitFor(() => {
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes(`dates=${laterStamp}`))).toBe(true);
+  });
+  expect(screen.queryByText('Boston Celtics at New York Knicks')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'My Teams' }));
+  expect(screen.getAllByRole('button', { name: 'Export' }).every((button) => !button.disabled)).toBe(true);
+  await userEvent.click(exportButtons()[0]);
+  expect(screen.getByRole('heading', { name: 'Export' })).toBeInTheDocument();
+  expect(screen.getByText(/not only the month on screen/)).toBeInTheDocument();
+  const google = screen.getByRole('button', { name: 'Add to Google Calendar' });
+  expect(google).toBeEnabled();
+  await waitFor(async () => {
+    await userEvent.click(screen.getByRole('button', { name: 'Download iCal (.ics)' }));
+    const ics = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(calendarFile);
+    });
+    expect(ics).toContain('Boston Celtics at Cleveland Cavaliers');
+    expect(ics).toContain('Boston Celtics at New York Knicks');
+  });
 });
 
 test('follows the system theme until the toggle overrides it', async () => {

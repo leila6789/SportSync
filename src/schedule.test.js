@@ -4,6 +4,7 @@ import {
   collegeTeamIdFromRef,
   fetchLeagueMonth,
   fetchLeagueTeams,
+  mergeTeams,
   refreshLeagueMonth,
   teamSnapshot,
   collapseConferenceDuplicates,
@@ -366,4 +367,72 @@ test('refreshes a cached month and picks the next and last game', async () => {
   expect(teamSnapshot('nba:2', events, now)).toMatchObject({ next: { id: 'next' }, last: { id: 'final' }, live: null });
   const live = { id: 'live', homeKey: 'nba:5', awayKey: 'nba:2', start: now, state: 'in', awayScore: '20', homeScore: '18', title: 'BOS @ CLE' };
   expect(teamSnapshot('nba:2', [...events, live], now).next.id).toBe('live');
+});
+
+test('hides inactive ESPN teams from the roster and the picker list', async () => {
+  const wnba = LEAGUES.find((league) => league.id === 'wnba');
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.endsWith('/teams/17475') || href.includes('/teams/17475?')) {
+      return jsonResponse({ id: '17475', displayName: 'JAPAN', abbreviation: 'JPN', isActive: false });
+    }
+    if (href.endsWith('/teams/20') || href.includes('/teams/20?')) {
+      return jsonResponse({ id: '20', displayName: 'Atlanta Dream', abbreviation: 'ATL', isActive: true });
+    }
+    if (href.includes('/teams/17476')) {
+      return jsonResponse({ id: '17476', displayName: 'NIGERIA', abbreviation: 'NIGER', isActive: false });
+    }
+    if (href.includes('sports')) {
+      return jsonResponse({
+        sports: [{
+          leagues: [{
+            teams: [
+              { team: { id: '20', displayName: 'Atlanta Dream', abbreviation: 'ATL', isActive: true } },
+              { team: { id: '9', displayName: 'New York Liberty', abbreviation: 'NY' } },
+              { team: { id: '17475', displayName: 'JAPAN', abbreviation: 'JPN', isActive: false } },
+              { isActive: false, team: { id: '17476', displayName: 'NIGERIA', abbreviation: 'NIGER' } },
+            ],
+          }],
+        }],
+      });
+    }
+    return jsonResponse({
+      items: [
+        { $ref: 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/wnba/teams/20' },
+        { $ref: 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/wnba/teams/17475' },
+      ],
+    });
+  });
+
+  const listed = await fetchLeagueTeams(wnba);
+  expect(listed.map((team) => team.name)).toEqual(['Atlanta Dream', 'New York Liberty']);
+  const merged = mergeTeams(listed, [{
+    leagueId: 'wnba',
+    homeKey: 'wnba:17475',
+    awayKey: 'wnba:20',
+    homeTeam: 'JAPAN',
+    awayTeam: 'Atlanta Dream',
+    homeAbbr: 'JPN',
+    awayAbbr: 'ATL',
+  }]);
+  expect(merged.map((team) => team.name)).toEqual(['Atlanta Dream', 'New York Liberty']);
+
+  resetScheduleCache();
+  global.fetch = jest.fn(async (url) => {
+    const href = String(url);
+    if (href.includes('/teams/17475')) {
+      return jsonResponse({ id: '17475', displayName: 'JAPAN', abbreviation: 'JPN', isActive: false });
+    }
+    if (href.includes('/teams/20')) {
+      return jsonResponse({ id: '20', displayName: 'Atlanta Dream', abbreviation: 'ATL', isActive: true });
+    }
+    return jsonResponse({
+      items: [
+        { $ref: 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/wnba/teams/20' },
+        { $ref: 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/wnba/teams/17475' },
+      ],
+    });
+  });
+  const fromCore = await fetchLeagueTeams(wnba);
+  expect(fromCore.map((team) => team.name)).toEqual(['Atlanta Dream']);
 });

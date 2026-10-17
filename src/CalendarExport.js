@@ -154,6 +154,7 @@ export function toGoogleEventResource(event) {
 
 export function buildFilename({ leagueIds, view, start }) {
   const leagues = [...leagueIds].sort().join('-') || 'sports';
+  if (view === 'season') return `sportsync-${leagues}-season.ics`;
   const year = start.getFullYear();
   const month = String(start.getMonth() + 1).padStart(2, '0');
   const day = String(start.getDate()).padStart(2, '0');

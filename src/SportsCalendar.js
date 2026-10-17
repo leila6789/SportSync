@@ -33,6 +33,7 @@ import {
   fetchLeagueTeams,
   fetchPublishedMonths,
   filterEvents,
+  inactiveTeamKeySet,
   leagueById,
   leaguesForTeams,
   mergeTeams,
@@ -56,6 +57,9 @@ const STORAGE_KEY = 'sportsync.filters.v2';
 const THEME_KEY = 'sportsync.theme';
 export const LIVE_REFRESH_MS = 30000;
 const BUSY_DAY = 3;
+const EXPORT_HINT = 'Follow a team to export its calendar.';
+const EXPORT_READY_HINT = 'Export every loaded game for the teams you follow';
+const GOOGLE_IMPORT_URL = 'https://calendar.google.com/calendar/u/0/r/settings/export';
 
 const ThemeContext = React.createContext('light');
 
@@ -256,6 +260,7 @@ export default function SportsCalendar() {
   const [errors, setErrors] = useState({});
   const [pending, setPending] = useState(0);
   const [teams, setTeams] = useState([]);
+  const [inactiveKeys, setInactiveKeys] = useState(() => new Set());
   const [teamsLoading, setTeamsLoading] = useState(true);
   const [dialog, setDialog] = useState(null);
   const [notice, setNotice] = useState('');
@@ -306,7 +311,14 @@ export default function SportsCalendar() {
     let cancelled = false;
     setTeamsLoading(true);
     Promise.allSettled(LEAGUES.map((league) => fetchLeagueTeams(league).then((loaded) => {
-      if (cancelled || !loaded?.length) return;
+      if (cancelled) return;
+      const hidden = inactiveTeamKeySet();
+      if (hidden.size) {
+        setInactiveKeys((current) => (
+          current.size === hidden.size && [...hidden].every((key) => current.has(key)) ? current : hidden
+        ));
+      }
+      if (!loaded?.length) return;
       setTeams((current) => {
         const map = new Map(current.map((team) => [team.key, team]));
         for (const team of loaded) map.set(team.key, team);
@@ -474,7 +486,11 @@ export default function SportsCalendar() {
     () => eventsInPeriod(filtered, gridRange.start, gridRange.end),
     [filtered, gridRange]
   );
-  const directory = useMemo(() => mergeTeams(teams, allEvents), [teams, allEvents]);
+  const directory = useMemo(
+    () => mergeTeams(teams, allEvents).filter((team) => !inactiveKeys.has(team.key)),
+    [teams, allEvents, inactiveKeys]
+  );
+  const exportEvents = filtered;
   const label = view === 'home' ? 'My Teams' : periodTitle(view, cursor);
   const selectedTeams = directory.filter((team) => teamKeys.includes(team.key));
   const query = teamSearch.trim().toLowerCase();
@@ -549,11 +565,15 @@ export default function SportsCalendar() {
     ));
   }
 
-  function handleDownload(events = periodEvents) {
-    if (!teamKeys.length || !events.length) return;
-    const filename = events.length === 1
+  function handleDownload(events = exportEvents, scope = 'season') {
+    if (!teamKeys.length || !events?.length) return;
+    const filename = scope === 'event'
       ? singleEventFilename(events[0])
-      : buildFilename({ leagueIds, view: view === 'home' ? 'month' : view, start: period.start });
+      : buildFilename({
+        leagueIds: [...new Set(events.map((event) => event.leagueId))],
+        view: 'season',
+        start: events[0].start,
+      });
     downloadIcs(filename, buildIcs(events));
     setNotice(`Downloaded ${filename}`);
   }
@@ -604,14 +624,21 @@ export default function SportsCalendar() {
             >
               Filters{teamKeys.length ? ` · ${teamKeys.length}` : ''}
             </button>
-            <button
-              type="button"
-              className="ss-btn primary"
-              onClick={() => setDialog({ type: 'export' })}
-              disabled={!teamKeys.length || !periodEvents.length}
-            >
-              Export
-            </button>
+            <div className="ss-export-slot">
+              <button
+                type="button"
+                className="ss-btn primary ss-export"
+                onClick={() => setDialog({ type: 'export' })}
+                disabled={!teamKeys.length}
+                title={teamKeys.length ? EXPORT_READY_HINT : EXPORT_HINT}
+                aria-describedby={teamKeys.length ? undefined : 'ss-export-hint'}
+              >
+                Export
+              </button>
+              {!teamKeys.length && (
+                <span id="ss-export-hint" className="ss-export-hint">{EXPORT_HINT}</span>
+              )}
+            </div>
           </div>
         </header>
 
@@ -629,6 +656,7 @@ export default function SportsCalendar() {
                       key={league.id}
                       type="button"
                       className={`ss-league${on ? ' is-on' : ''}`}
+                      style={{ '--league': league.color }}
                       aria-pressed={on}
                       aria-label={league.fullName === league.name ? league.name : `${league.name} ${league.fullName}`}
                       title={leagueCountTitle(followed, total, teamsLoading)}
@@ -767,6 +795,7 @@ export default function SportsCalendar() {
                 onChoose={() => setPickerOpen(true)}
                 onClearTeams={() => setTeamKeys([])}
                 onShowLeagues={() => setLeagueIds(LEAGUES.map((league) => league.id))}
+                onExport={() => setDialog({ type: 'export' })}
               />
             )}
 
@@ -867,6 +896,16 @@ export default function SportsCalendar() {
           >
             My Teams
           </button>
+          <button
+            type="button"
+            className="ss-tab ss-tab-export"
+            onClick={() => setDialog({ type: 'export' })}
+            disabled={!teamKeys.length}
+            title={teamKeys.length ? EXPORT_READY_HINT : EXPORT_HINT}
+            aria-describedby={teamKeys.length ? undefined : 'ss-export-hint'}
+          >
+            Export
+          </button>
         </nav>
 
         {notice && (
@@ -877,17 +916,16 @@ export default function SportsCalendar() {
           <EventDialog
             event={dialogEvent}
             onClose={() => setDialog(null)}
-            onDownload={() => handleDownload([dialogEvent])}
+            onDownload={() => handleDownload([dialogEvent], 'event')}
           />
         )}
         {dialog?.type === 'export' && (
           <ExportDialog
-            events={periodEvents}
-            label={label}
-            leagueIds={leagueIds}
+            events={exportEvents}
             teamKeys={teamKeys}
+            pending={pending}
             onClose={() => setDialog(null)}
-            onDownload={() => handleDownload()}
+            onDownload={() => handleDownload(exportEvents, 'season')}
           />
         )}
         {pickerOpen && (
@@ -988,7 +1026,10 @@ function ListView({ events, pending, leagueIds, teamKeys, today = false, onOpen,
                     {event.fullTitle}
                   </button>
                   <p>
-                    <span className="ss-league-name" style={{ color: event.color }}>{event.leagueName}</span>
+                    <span className="ss-league-name">
+                      <span className="ss-dot" style={{ background: event.color }} aria-hidden="true" />
+                      {event.leagueName}
+                    </span>
                     {event.venue ? ` · ${event.venue}` : ''}
                     {event.broadcasts.length ? ` · ${event.broadcasts.join(', ')}` : ''}
                     <ScoreLine event={event} />
@@ -1082,25 +1123,53 @@ function OddsSummary({ event, teamKey }) {
   );
 }
 
-function TeamHome({ teams, events, pending, leagueIds, teamKeys, onOpen, onChoose, onClearTeams, onShowLeagues }) {
-  if (!teamKeys.length) {
+function TeamHome({ teams, events, pending, leagueIds, teamKeys, onOpen, onChoose, onClearTeams, onShowLeagues, onExport }) {
+  const ready = teamKeys.length > 0;
+  const tools = (
+    <div className="ss-home-tools">
+      <button
+        type="button"
+        className="ss-btn primary ss-export"
+        onClick={onExport}
+        disabled={!ready}
+        title={ready ? EXPORT_READY_HINT : EXPORT_HINT}
+        aria-describedby={ready ? undefined : 'ss-export-hint'}
+      >
+        Export
+      </button>
+      {!ready && <span className="ss-export-hint">{EXPORT_HINT}</span>}
+    </div>
+  );
+  if (!ready) {
     return (
-      <EmptyState
-        leagueIds={leagueIds}
-        teamKeys={teamKeys}
-        onChoose={onChoose}
-        onClearTeams={onClearTeams}
-        onShowLeagues={onShowLeagues}
-      />
+      <div className="ss-home">
+        {tools}
+        <EmptyState
+          leagueIds={leagueIds}
+          teamKeys={teamKeys}
+          onChoose={onChoose}
+          onClearTeams={onClearTeams}
+          onShowLeagues={onShowLeagues}
+        />
+      </div>
     );
   }
-  if (!events.length && pending) return <p className="ss-muted ss-list-loading">Loading games…</p>;
+  if (!events.length && pending) {
+    return (
+      <div className="ss-home">
+        {tools}
+        <p className="ss-muted ss-list-loading">Loading games…</p>
+      </div>
+    );
+  }
   const now = new Date();
   const cards = teams
     .map((team) => ({ team, ...teamSnapshot(team.key, events, now) }))
     .sort((a, b) => (a.next?.start?.getTime() ?? Infinity) - (b.next?.start?.getTime() ?? Infinity) || a.team.name.localeCompare(b.team.name));
   return (
-    <div className="ss-home-grid">
+    <div className="ss-home">
+      {tools}
+      <div className="ss-home-grid">
       {cards.map(({ team, next, last, live }) => {
         const league = leagueById(team.leagueId);
         const featured = live || next;
@@ -1154,6 +1223,7 @@ function TeamHome({ teams, events, pending, leagueIds, teamKeys, onOpen, onChoos
           </article>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -1272,6 +1342,7 @@ function TeamPicker({ teams, teamsLoading, teamKeys, onToggle, onSkip, onContinu
           <button
             key={league.id}
             type="button"
+            style={{ '--league': league.color }}
             aria-pressed={leagueFilter === league.id}
             aria-label={`${league.name} teams`}
             onClick={() => setLeagueFilter(league.id)}
@@ -1365,7 +1436,10 @@ function EventDialog({ event, onClose, onDownload }) {
         onClick={(click) => click.stopPropagation()}
       >
         <div className="ss-sheet-handle" aria-hidden="true" />
-        <p className="ss-kicker" style={{ color: event.color }}>{event.leagueName}</p>
+        <p className="ss-kicker">
+          <span className="ss-dot" style={{ background: event.color }} aria-hidden="true" />
+          {event.leagueName}
+        </p>
         <div className="ss-dialog-teams">
           <div>
             <Logo src={event.awayLogo} className="ss-dialog-logo" />
@@ -1414,7 +1488,7 @@ function EventDialog({ event, onClose, onDownload }) {
   );
 }
 
-function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload }) {
+function ExportDialog({ events, teamKeys, pending, onClose, onDownload }) {
   const ref = useRef(null);
   const configured = isGoogleSyncConfigured();
   const [confirming, setConfirming] = useState(false);
@@ -1427,8 +1501,17 @@ function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload 
     ref.current?.focus();
   }, []);
 
-  const leagueLabel = LEAGUES.filter((league) => leagueIds.includes(league.id)).map((league) => league.name).join(', ') || 'no leagues';
-  const teamLabel = teamKeys.length ? `${teamKeys.length} selected team${teamKeys.length === 1 ? '' : 's'}` : 'no teams';
+  const teamLabel = teamKeys.length === 1 ? '1 followed team' : `${teamKeys.length} followed teams`;
+
+  function addToGoogle() {
+    if (!events.length) return;
+    if (events.length === 1) {
+      window.open(googleCalendarUrl(events[0]), '_blank', 'noopener,noreferrer');
+      return;
+    }
+    window.open(GOOGLE_IMPORT_URL, '_blank', 'noopener,noreferrer');
+    onDownload();
+  }
 
   async function sync() {
     setSyncing(true);
@@ -1467,12 +1550,15 @@ function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload 
         <div className="ss-sheet-handle" aria-hidden="true" />
         <h2 id="ss-export-title">Export</h2>
         <p>
-          {label} · {leagueLabel} · {teamLabel} · {events.length} {events.length === 1 ? 'game' : 'games'}
+          {teamLabel} · {events.length} loaded {events.length === 1 ? 'game' : 'games'}
+        </p>
+        <p className="ss-muted">
+          This is every loaded game for the teams you follow, not only the month on screen.
+          {pending > 0 ? ' More games may still be loading.' : ''}
         </p>
         <ol className="ss-steps">
-          <li>Download an .ics file and import it in Apple Calendar, Google Calendar, or Outlook.</li>
-          <li>Open Google Calendar import, then choose that file under Settings → Import &amp; export.</li>
-          <li>Or open a game and choose Add to Google Calendar to save that game on its own.</li>
+          <li>Download iCal (.ics) and import it in Apple Calendar, Google Calendar, or Outlook.</li>
+          <li>Add to Google Calendar opens one game ready to save. With more than one game, it downloads the file and opens Google Calendar’s import page.</li>
         </ol>
         <div className="ss-dialog-actions">
           <button
@@ -1480,25 +1566,24 @@ function ExportDialog({ events, label, leagueIds, teamKeys, onClose, onDownload 
             className="ss-btn primary"
             onClick={onDownload}
             disabled={!events.length}
-            aria-label={`Download iCal file for ${label}`}
           >
-            Download .ics
+            Download iCal (.ics)
           </button>
-          <a
+          <button
+            type="button"
             className="ss-btn"
-            href="https://calendar.google.com/calendar/u/0/r/settings/export"
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={addToGoogle}
+            disabled={!events.length}
           >
-            Open Google Calendar import
-          </a>
+            Add to Google Calendar
+          </button>
         </div>
         {configured && (
           <div className="ss-sync">
-            <h3>Sync this view</h3>
+            <h3>Sync these games</h3>
             <p className="ss-muted">
               Adds these games to your primary Google Calendar. Games already added from SportSync are skipped.
-              {events.length > 60 ? ' Large months are faster as an .ics import.' : ''}
+              {events.length > 60 ? ' A full season is faster as an .ics import.' : ''}
             </p>
             {!confirming && (
               <button type="button" className="ss-btn" disabled={!events.length || syncing} onClick={() => setConfirming(true)}>

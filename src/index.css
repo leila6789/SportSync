@@ -20,6 +20,8 @@
   --header: rgba(244, 241, 234, 0.92);
   --danger-bg: #fff1f2;
   --danger-ink: #9f1239;
+  --solid-bg: #1c1917;
+  --solid-ink: #f5f0e8;
 }
 
 :root[data-theme="dark"] {
@@ -38,6 +40,8 @@
   --header: rgba(20, 18, 16, 0.92);
   --danger-bg: #3f1d24;
   --danger-ink: #fecdd3;
+  --solid-bg: #f5f0e8;
+  --solid-ink: #1c1917;
 }
 
 html,

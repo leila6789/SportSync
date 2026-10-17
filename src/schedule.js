@@ -85,10 +85,17 @@ export const LEAGUES = [
 
 const monthCache = new Map();
 const jsonCache = new Map();
+const inactiveTeamKeys = new Set();
 
 export function resetScheduleCache() {
   monthCache.clear();
   jsonCache.clear();
+  inactiveTeamKeys.clear();
+}
+
+/** Team ids ESPN marked isActive:false during the latest roster load. */
+export function inactiveTeamKeySet() {
+  return new Set(inactiveTeamKeys);
 }
 
 export function leagueById(id) {
@@ -279,10 +286,19 @@ export function themedLogo(url, theme) {
   return url.replace('/500/', '/500-dark/');
 }
 
+function rememberInactive(league, team) {
+  if (!league?.id || !team?.id || String(team.id) === 'undefined') return;
+  inactiveTeamKeys.add(`${league.id}:${team.id}`);
+}
+
 function presentTeam(league, team) {
   if (!team?.id || String(team.id) === 'undefined' || !team.displayName) return null;
   const abbreviation = team.abbreviation || '';
   if (!abbreviation || abbreviation === 'TBD') return null;
+  if (team.isActive === false) {
+    rememberInactive(league, team);
+    return null;
+  }
   const brand = teamBrand(league, team);
   return {
     key: `${league.id}:${team.id}`,
@@ -380,7 +396,15 @@ export function normalizeEvents(league, data) {
 export function normalizeTeams(league, data) {
   const teams = data?.sports?.[0]?.leagues?.[0]?.teams || [];
   return teams
-    .map(({ team }) => presentTeam(league, team))
+    .map((entry) => {
+      const team = entry?.team;
+      if (!team) return null;
+      if (entry.isActive === false) {
+        rememberInactive(league, team);
+        return null;
+      }
+      return presentTeam(league, team);
+    })
     .filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -665,7 +689,7 @@ export function mergeTeams(teams, events) {
       ['awayKey', 'awayTeam', 'awayAbbr', 'awayLogo', 'awayColor'],
     ].forEach(([keyName, name, abbr, logoName, colorName]) => {
       const key = event[keyName];
-      if (!key || map.has(key)) return;
+      if (!key || map.has(key) || inactiveTeamKeys.has(key)) return;
       const id = key.split(':')[1];
       map.set(key, {
         key,
